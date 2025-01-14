@@ -1,17 +1,16 @@
-# 🎵 Soundcloud Shazam Toolkit
+# 🎵 Soundcloud Shazam Tool
 
 > 🔍 A Python script that downloads audio from SoundCloud or YouTube, splits it into segments, and uses Shazam to identify songs within the mix.
 
 ## ✨ Features
 
 - 🎧 Download audio from SoundCloud or YouTube URLs
-- ✂️ Split audio files into 1-minute segments
 - 🎼 Identify songs using Shazam API
-- ⚡ Handle large audio files efficiently
-- 🔄 Remove duplicate song entries
 - 💾 Save results to timestamped text files
 
 ## 🛠️ Requirements
+
+This project uses [scdl](https://github.com/flyingrub/scdl) for downloading SoundCloud tracks.
 
 ### Linux
 
@@ -74,13 +73,13 @@ Results are saved in the `recognised-lists` directory with timestamped filenames
 songs-DDMMYY-HHMMSS.txt
 ```
 
-> 🎵 The generated song list can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
+> ℹ️ The generated song list can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
 
 ## 📝 Notes
 
-- 🎯 The script splits audio into 1-minute segments for optimal recognition
-- 🔄 Duplicate songs within the same mix are automatically filtered out
-- ⚡ Large files are processed in chunks to manage memory efficiently
+- The script splits audio into 1-minute segments for optimal recognition
+- Duplicate songs within the same mix are automatically filtered out
+- Large files are processed in chunks to manage memory efficiently
 
 ## 🤝 Contributing
 

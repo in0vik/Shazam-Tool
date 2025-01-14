@@ -1,4 +1,4 @@
-# 🎵 Soundcloud Shazam Tool
+# 🎵 Shazam Tool
 
 > 🔍 A Python script that downloads audio from SoundCloud or YouTube, splits it into segments, and uses Shazam to identify songs within the mix.
 

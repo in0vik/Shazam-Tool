@@ -4,36 +4,39 @@ import asyncio
 from datetime import datetime
 import subprocess
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from pydub import AudioSegment
 from shazamio import Shazam
 from pytube import YouTube
 
-# Length of each segment in milliseconds
+# Длина каждого сегмента в миллисекундах (1 минута)
 SEGMENT_LENGTH = 60 * 1000
+
+# Directory for downloaded files
 DOWNLOADS_DIR = 'downloads'
 
-# Logger configuration
+# Logger setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()  # Add handler for console output
+        logging.StreamHandler()  # Console output
     ]
 )
-
-# Get logger for scdl
 logger = logging.getLogger('scdl')
+
 
 def ensure_directory_exists(dir_path: str) -> None:
     """
-    Ensure that the specified directory exists; if not, create it.
+    Checks if directory exists, creates it if it doesn't.
     """
     os.makedirs(dir_path, exist_ok=True)
 
+
 def remove_files(directory: str) -> None:
     """
-    Remove all files in the specified directory. If the directory does not exist,
+    Removes all files in specified directory. If directory doesn't exist,
     it will be created.
     """
     ensure_directory_exists(directory)
@@ -42,11 +45,12 @@ def remove_files(directory: str) -> None:
         try:
             os.remove(file_path)
         except OSError as e:
-            print(f"Error removing file {file_path}: {e}")
+            print(f"Error deleting file {file_path}: {e}")
+
 
 def write_to_file(data: str, filename: str) -> None:
     """
-    Append a line of text to the specified file, only if data is not "Not found".
+    Appends text string to specified file if data != 'Not found'.
     """
     if data != "Not found":
         try:
@@ -55,53 +59,6 @@ def write_to_file(data: str, filename: str) -> None:
         except OSError as e:
             print(f"Error writing to file {filename}: {e}")
 
-def segment_audio(audio_file: str, output_directory: str = "tmp") -> None:
-    """
-    Segment an mp3 file into 1-minute chunks and store them in the output directory.
-    Handles large files by processing them in chunks.
-    """
-    ensure_directory_exists(output_directory)
-    
-    try:
-        # Open the file in binary mode for manual chunking
-        with open(audio_file, 'rb') as f:
-            # Read the file in 1GB chunks
-            chunk_size = 1024 * 1024 * 1024  # 1GB
-            segment_counter = 1
-            
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                
-                # Create a temporary file for this chunk
-                temp_chunk_path = os.path.join(output_directory, f"temp_chunk_{segment_counter}.mp3")
-                with open(temp_chunk_path, 'wb') as temp_file:
-                    temp_file.write(chunk)
-                
-                try:
-                    # Process this chunk with pydub
-                    audio_chunk = AudioSegment.from_file(temp_chunk_path, format="mp3")
-                    
-                    # Create segments from this chunk
-                    segments = [audio_chunk[i:i+SEGMENT_LENGTH] for i in range(0, len(audio_chunk), SEGMENT_LENGTH)]
-                    
-                    # Export segments
-                    for segment in segments:
-                        segment_file_path = os.path.join(output_directory, f"{segment_counter}.mp3")
-                        segment.export(segment_file_path, format="mp3")
-                        segment_counter += 1
-                    
-                    # Remove temporary chunk file
-                    os.remove(temp_chunk_path)
-                    
-                except Exception as e:
-                    print(f"Error processing chunk: {e}")
-                    if os.path.exists(temp_chunk_path):
-                        os.remove(temp_chunk_path)
-                    
-    except Exception as e:
-        print(f"Failed to process audio file {audio_file}: {e}")
 
 def download_soundcloud(url: str, output_path: str = DOWNLOADS_DIR) -> None:
     """
@@ -109,78 +66,139 @@ def download_soundcloud(url: str, output_path: str = DOWNLOADS_DIR) -> None:
     """
     ensure_directory_exists(output_path)
     try:
-        # Run scdl command without capturing output
+        # Redirect stdout and stderr to DEVNULL to suppress scdl logs
         result = subprocess.run(
             ['scdl', '-l', url, '--path', output_path, '--onlymp3'],
-            check=True 
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
+        print("✅ Successfully downloaded from SoundCloud!")
     except subprocess.CalledProcessError as e:
-        print(f"Failed to download from SoundCloud. Exit code: {e.returncode}")
+        print(f"❌ Failed to download from SoundCloud. Exit code: {e.returncode}")
     except Exception as e:
-        print(f"Failed to download from SoundCloud {url}: {e}")
+        print(f"❌ Failed to download from SoundCloud {url}: {e}")
+
 
 def download_youtube(url: str, output_path: str = DOWNLOADS_DIR) -> None:
     """
-    Download the audio track of a YouTube video and convert it to mp3.
+    Download the audio track from a YouTube video and convert to mp3.
     """
     ensure_directory_exists(output_path)
     try:
         yt = YouTube(url)
-        video = yt.streams.filter(only_audio=True).first()
-        out_file = video.download(output_path=output_path)
+        video_stream = yt.streams.filter(only_audio=True).first()
+        out_file = video_stream.download(output_path=output_path)
         base, _ = os.path.splitext(out_file)
         new_file = base + '.mp3'
         os.rename(out_file, new_file)
-        print(f"{yt.title} has been successfully downloaded.")
+        print(f"✅ Successfully downloaded: {yt.title}!")
     except Exception as e:
-        print(f"Failed to download from YouTube {url}: {e}")
+        print(f"❌ Error downloading from YouTube {url}: {e}")
+
 
 def download_from_url(url: str) -> None:
     """
-    Download audio from either YouTube or SoundCloud URL.
+    Determines if URL is YouTube or SoundCloud and calls appropriate download function.
     """
-    if 'soundcloud.com' in url.lower():
+    print("🚀 Starting download...")
+    lower_url = url.lower()
+    if 'soundcloud.com' in lower_url:
+        print("🎵 SoundCloud URL detected")
         download_soundcloud(url)
-    elif 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+    elif 'youtube.com' in lower_url or 'youtu.be' in lower_url:
+        print("🎥 YouTube URL detected")
         download_youtube(url)
     else:
-        print("Unsupported URL format. Please provide a YouTube or SoundCloud URL.")
+        print("❌ Unsupported URL format. Please provide a YouTube or SoundCloud link.")
 
-async def get_name(file: str, max_retries: int = 3) -> str:
+
+def segment_audio(audio_file: str, output_directory: str = "tmp", num_threads: int = 4) -> None:
     """
-    Use Shazamio to recognize the song with retry logic.
+    Segments MP3 file into chunks of SEGMENT_LENGTH duration (in milliseconds)
+    using parallel processing.
+    """
+    ensure_directory_exists(output_directory)
+    try:
+        with open(audio_file, 'rb') as f:
+            chunk_size = 1024 * 1024 * 1024  # 1GB
+            segment_index = 1
+
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+
+                temp_chunk_path = os.path.join(output_directory, f"temp_chunk_{segment_index}.mp3")
+                with open(temp_chunk_path, 'wb') as temp_file:
+                    temp_file.write(chunk)
+
+                try:
+                    audio_chunk = AudioSegment.from_file(temp_chunk_path, format="mp3")
+                    segments = [audio_chunk[i:i + SEGMENT_LENGTH]
+                                for i in range(0, len(audio_chunk), SEGMENT_LENGTH)]
+
+                    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                        futures = []
+                        for seg in segments:
+                            segment_file_path = os.path.join(output_directory, f"{segment_index}.mp3")
+                            futures.append(
+                                executor.submit(seg.export, segment_file_path, format="mp3")
+                            )
+                            segment_index += 1
+
+                        for future in futures:
+                            future.result()
+
+                    os.remove(temp_chunk_path)
+
+                except Exception as e:
+                    logger.error(f"Error processing chunk: {e}")
+                    if os.path.exists(temp_chunk_path):
+                        os.remove(temp_chunk_path)
+
+    except Exception as e:
+        logger.error(f"Failed to process audio file {audio_file}: {e}")
+
+
+async def get_name(file_path: str, max_retries: int = 3) -> str:
+    """
+    Uses Shazam to recognize the song with retry logic and error handling.
     """
     shazam = Shazam()
     for attempt in range(max_retries):
         try:
-            data = await shazam.recognize(file)
+            data = await shazam.recognize(file_path)
             if 'track' not in data:
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(1)  # Wait before retry
+                    await asyncio.sleep(1)
                     continue
                 return "Not found"
+
             title = data['track']['title']
             subtitle = data['track']['subtitle']
-            print(f"{title} - {subtitle}")
-            return f"{title} - {subtitle}"
+            result = f"{title} - {subtitle}"
+            logger.info(result)
+            return result
+
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"Retry {attempt + 1}/{max_retries} for {file}: {e}")
-                await asyncio.sleep(1)  # Wait before retry
+                logger.warning(f"Retry {attempt + 1}/{max_retries} for {file_path}: {e}")
+                await asyncio.sleep(1)
                 continue
-            print(f"Shazam recognition failed after {max_retries} attempts for {file}: {e}")
+            logger.error(f"Shazam recognition failed after {max_retries} attempts: {e}")
             return "Not found"
+
 
 def process_audio_file(audio_file: str, output_filename: str) -> None:
     """
-    Process a single audio file with duplicate detection.
+    Processes a single audio file: segments it, recognizes each segment,
+    excludes duplicate tracks, and saves results.
     """
-    print(f"\nProcessing: {audio_file}")
-    
-    # Track unique songs
-    unique_songs = set()
-    
-    # Write file name as header
+    print(f"\n🎵 Processing file: {audio_file}")
+
+    unique_tracks = set()
+
     try:
         with open(output_filename, "a", encoding="utf-8") as f:
             f.write(f"===== {os.path.basename(audio_file)} ======\n")
@@ -188,49 +206,85 @@ def process_audio_file(audio_file: str, output_filename: str) -> None:
         print(f"Error writing header for {audio_file}: {e}")
         return
 
-    print("Removing temporary files...")
+    print("🧹 Cleaning temporary files...")
     remove_files("tmp")
 
-    print("Segmenting audio file...")
+    print("✂️ Segmenting audio file...")
     segment_audio(audio_file, "tmp")
 
-    print("Getting song names...")
+    print("🔍 Recognizing segments...")
     tmp_files = sorted(os.listdir("tmp"), key=lambda x: int(x.split('.')[0]))
     for file_name in tmp_files:
         segment_path = os.path.join("tmp", file_name)
         try:
             loop = asyncio.get_event_loop()
-            name = loop.run_until_complete(get_name(segment_path))
-            if name != "Not found" and name not in unique_songs:
-                unique_songs.add(name)
-                write_to_file(name, output_filename)
+            track_name = loop.run_until_complete(get_name(segment_path))
+            if track_name != "Not found" and track_name not in unique_tracks:
+                unique_tracks.add(track_name)
+                write_to_file(track_name, output_filename)
         except Exception as e:
             print(f"Error processing segment {file_name}: {e}")
             continue
 
-    # Add two newlines after processing each file
     try:
         with open(output_filename, "a", encoding="utf-8") as f:
             f.write("\n\n")
     except OSError as e:
-        print(f"Error writing spacing after {audio_file}: {e}")
+        print(f"Error writing empty line for {audio_file}: {e}")
 
-    print("Cleaning up...")
+    print("🧹 Cleaning temporary files...")
     remove_files("tmp")
-    print(f"Finished processing: {audio_file}")
+    print(f"✅ Successfully processed file: {audio_file}")
 
-def print_usage():
+
+def process_downloads() -> None:
     """
-    Print usage instructions for the script.
+    Process all MP3 files in DOWNLOADS_DIR: recognize each and save results to a new file.
+    """
+    output_dir = "recognised-lists"
+    ensure_directory_exists(output_dir)
+    ensure_directory_exists(DOWNLOADS_DIR)
+
+    mp3_files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp3')]
+    if not mp3_files:
+        print(f"❌ No MP3 files found in '{DOWNLOADS_DIR}' directory.")
+        return
+
+    timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
+    output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
+
+    try:
+        with open(output_filename, "w", encoding="utf-8") as f:
+            f.write(f"===== Scan results for {DOWNLOADS_DIR} directory ======\n\n")
+    except OSError as e:
+        print(f"Error creating output file {output_filename}: {e}")
+        return
+
+    print(f"📝 Found {len(mp3_files)} MP3 files to process...")
+    print("🚀 Starting processing...")
+
+    for file_name in mp3_files:
+        full_path = os.path.join(DOWNLOADS_DIR, file_name)
+        process_audio_file(full_path, output_filename)
+
+    print(f"\n✨ All files successfully processed!")
+    print(f"📋 Results saved to {output_filename}")
+
+
+def print_usage() -> None:
+    """
+    Displays script usage instructions.
     """
     print("""
+🎵 Shazam Tool 🎵
+
 Usage: python shazam.py [command] [options]
 
 Commands:
-    scan                       Scan and recognize all MP3 files in downloads directory
-    download <url>             Download and process from YouTube or SoundCloud URL
-    recognize <file>           Recognize a single audio file
-    
+    🔍 scan                       Scan downloads directory and recognize all MP3
+    ⬇️  download <url>            Download and process audio from YouTube or SoundCloud
+    🎯 recognize <file_path>      Recognize specific audio file
+
 Examples:
     python shazam.py scan
     python shazam.py download https://www.youtube.com/watch?v=...
@@ -238,15 +292,17 @@ Examples:
     python shazam.py recognize path/to/audio.mp3
     """)
 
-def main():
+
+def main() -> None:
     if len(sys.argv) < 2:
         print_usage()
         sys.exit(1)
 
     command = sys.argv[1]
-
     output_dir = "recognised-lists"
     ensure_directory_exists(output_dir)
+
+    # Generate default output filename
     timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
     output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
 
@@ -254,42 +310,36 @@ def main():
         if len(sys.argv) != 3:
             print("Usage: python shazam.py download <url>")
             sys.exit(1)
+
         url = sys.argv[2]
-        
-        # Create output file with appropriate header
         try:
             with open(output_filename, "w", encoding="utf-8") as f:
-                f.write(f"===== Download Results ======\n\n")
+                f.write("===== Download Results ======\n\n")
         except OSError as e:
             print(f"Error creating output file {output_filename}: {e}")
             sys.exit(1)
-            
+
         download_from_url(url)
         process_downloads()
 
-    elif command in ['scan', 'scan-downloads']:  # Support both commands for compatibility
+    elif command in ['scan', 'scan-downloads']:
         print(f"Scanning {DOWNLOADS_DIR} directory for MP3 files...")
         process_downloads()
         return
 
     elif command == 'recognize':
         if len(sys.argv) != 3:
-            print("Usage: python shazam.py recognize <file>")
-            sys.exit(1)
-        
-        audio_file = sys.argv[2]
-        if not os.path.exists(audio_file):
-            print(f"Error: File '{audio_file}' not found")
+            print("Usage: python shazam.py recognize <file_path>")
             sys.exit(1)
 
-        output_dir = "recognised-lists"
-        ensure_directory_exists(output_dir)
-        timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
-        output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
+        audio_file = sys.argv[2]
+        if not os.path.exists(audio_file):
+            print(f"Error: File '{audio_file}' not found.")
+            sys.exit(1)
 
         try:
             with open(output_filename, "w", encoding="utf-8") as f:
-                f.write(f"===== Recognition Results ======\n\n")
+                f.write("===== Recognition Results ======\n\n")
         except OSError as e:
             print(f"Error creating output file {output_filename}: {e}")
             sys.exit(1)
@@ -302,38 +352,6 @@ def main():
         print_usage()
         sys.exit(1)
 
-def process_downloads():
-    """
-    Process all MP3 files in the downloads directory.
-    """
-    output_dir = "recognised-lists"
-    ensure_directory_exists(output_dir)
-    ensure_directory_exists(DOWNLOADS_DIR)  # Ensure downloads directory exists
-    
-    input_files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp3')]
-    
-    if not input_files:
-        print(f"No MP3 files found in '{DOWNLOADS_DIR}' directory.")
-        return
-
-    timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
-    output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
-
-    try:
-        with open(output_filename, "w", encoding="utf-8") as f:
-            f.write(f"===== Scan Results from {DOWNLOADS_DIR} directory ======\n\n")
-    except OSError as e:
-        print(f"Error creating output file {output_filename}: {e}")
-        return
-
-    print(f"Found {len(input_files)} MP3 files to process...")
-    print("Starting processing...")
-    
-    for audio_file in input_files:
-        full_path = os.path.join(DOWNLOADS_DIR, audio_file)
-        process_audio_file(full_path, output_filename)
-    
-    print(f"\nAll files processed! Results saved to {output_filename}")
 
 if __name__ == "__main__":
     main()

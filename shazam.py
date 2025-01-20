@@ -223,22 +223,6 @@ def process_audio_file(audio_file: str, output_filename: str, file_index: int, t
     print(f"✅ Successfully processed file: {audio_file}")
 
 
-def open_file(filepath: str) -> None:
-    """
-    Opens a file using the default system application.
-    """
-    try:
-        if sys.platform == 'win32':
-            os.startfile(filepath)
-        elif sys.platform == 'darwin':  # macOS
-            subprocess.run(['open', filepath], check=True)
-        else:  # linux variants
-            subprocess.run(['xdg-open', filepath], check=True)
-        print(f"📂 Opened {filepath}")
-    except Exception as e:
-        print(f"❌ Failed to open file {filepath}: {e}")
-
-
 def process_downloads() -> None:
     """
     Process all MP3 files in DOWNLOADS_DIR: recognize each and save results to a new file.
@@ -263,8 +247,8 @@ def process_downloads() -> None:
         return
 
     total_files = len(mp3_files)
-    print(f"3/5 📝 Found {total_files} MP3 file(s) to process...")
-    print("4/5 🚀 Starting processing...")
+    print(f"📝 Found {total_files} MP3 file(s) to process...")
+    print("🚀 Starting processing...")
 
     for idx, file_name in enumerate(mp3_files, start=1):
         full_path = os.path.join(DOWNLOADS_DIR, file_name)
@@ -272,7 +256,6 @@ def process_downloads() -> None:
 
     print(f"\n5/5 ✨ All files successfully processed!")
     print(f"📋 Results saved to {output_filename}")
-    open_file(output_filename)
 
 
 def print_usage() -> None:
@@ -351,7 +334,6 @@ def main() -> None:
         # Since we're processing a single file, pass file_index=1 and total_files=1
         process_audio_file(audio_file, output_filename, 1, 1)
         print(f"\nResults saved to {output_filename}")
-        open_file(output_filename)
 
     else:
         print(f"Unknown command: {command}")

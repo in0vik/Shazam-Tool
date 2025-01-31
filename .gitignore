@@ -1,4 +1,20 @@
 export/
+downloads/
+logs/
+recognised-lists/
 *.mp3
 *.txt
 venv/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# IDE files
+.idea/
+.vscode/
+*.pyc
+__pycache__/

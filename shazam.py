@@ -142,7 +142,7 @@ def segment_audio(audio_file: str, output_directory: str = "tmp", num_threads: i
 async def get_name(file_path: str, max_retries: int = 3) -> str:
     """
     Uses Shazam to recognize the song with retry logic and error handling.
-    Returns either 'Track Title - Artist' or 'Not found' if it fails.
+    Returns either 'Artist - Track Title' or 'Not found' if it fails.
     """
     shazam = Shazam()
     for attempt in range(max_retries):
@@ -156,7 +156,7 @@ async def get_name(file_path: str, max_retries: int = 3) -> str:
 
             title = data['track']['title']
             subtitle = data['track']['subtitle']
-            return f"{title} - {subtitle}"
+            return f"{subtitle} - {title}"
 
         except Exception as e:
             if attempt < max_retries - 1:

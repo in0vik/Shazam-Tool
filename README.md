@@ -34,7 +34,7 @@ brew install ffmpeg scdl
 # brew install python@3.11
 
 # Install required packages
-pip install shazamio pydub pytube ShazamApi
+pip install shazamio pydub pytube ShazamApi scdl
 ```
 
 ## 📚 Usage

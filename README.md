@@ -7,16 +7,17 @@
 - 🎧 Download audio from SoundCloud or YouTube URLs
 - 🎼 Identify songs using Shazam API
 - 💾 Save results to timestamped text files
+- 🚀 Easy setup and usage with provided shell script
 
 ## 🛠️ Requirements
 
-This project uses [scdl](https://github.com/flyingrub/scdl) for downloading SoundCloud tracks.
+This project uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloading audio from SoundCloud and YouTube.
 
 ### Linux
 
 ```sh
-sudo apt install ffmpeg scdl
-pip install ShazamApi pydub pytube shazamio
+sudo apt install ffmpeg
+pip install ShazamApi pydub yt-dlp shazamio
 ```
 
 ### macOS
@@ -25,7 +26,7 @@ pip install ShazamApi pydub pytube shazamio
 # Install Homebrew if not already installed
 # See https://brew.sh for installation instructions
 
-brew install ffmpeg scdl
+brew install ffmpeg
 
 # Optional: Create and activate virtual environment
 # python3.11 -m venv venv && source venv/bin/activate
@@ -34,14 +35,40 @@ brew install ffmpeg scdl
 # brew install python@3.11
 
 # Install required packages
-pip install shazamio pydub pytube ShazamApi scdl
+pip install shazamio pydub yt-dlp ShazamApi
 ```
 
 ## 📚 Usage
 
-The script supports three main commands:
+### Quick Start (Recommended)
 
-### 1. Download and Process from URL
+Use the provided shell script for easy setup and running:
+
+```sh
+# Make the script executable (if needed)
+chmod +x run_shazam.sh
+
+# Setup environment (installs dependencies, creates venv)
+./run_shazam.sh setup
+
+# Download and process audio from URL
+./run_shazam.sh download <url>
+
+# Process all downloaded files
+./run_shazam.sh scan
+
+# Process a specific audio file
+./run_shazam.sh recognize <file>
+
+# Show help information
+./run_shazam.sh help
+```
+
+### Manual Usage
+
+The script also supports direct Python invocation with three main commands:
+
+#### 1. Download and Process from URL
 
 ```sh
 python shazam.py download <url>
@@ -49,7 +76,7 @@ python shazam.py download <url>
 
 Downloads audio from YouTube or SoundCloud and processes it for song recognition.
 
-### 2. Scan Downloaded Files
+#### 2. Scan Downloaded Files
 
 ```sh
 python shazam.py scan
@@ -57,7 +84,7 @@ python shazam.py scan
 
 Processes all MP3 files in the Downloads directory.
 
-### 3. Recognize Single File
+#### 3. Recognize Single File
 
 ```sh
 python shazam.py recognize <file>

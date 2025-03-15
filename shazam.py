@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from pydub import AudioSegment
 from shazamio import Shazam
-from pytube import YouTube
+from yt_dlp import YoutubeDL
 
 # Duration of each segment in milliseconds (1 minute)
 SEGMENT_LENGTH = 60 * 1000
@@ -97,39 +97,49 @@ def write_to_file(data: str, filename: str) -> None:
 
 def download_soundcloud(url: str, output_path: str = DOWNLOADS_DIR) -> None:
     """
-    Download audio from a SoundCloud URL using scdl.
+    Download audio from a SoundCloud URL using yt-dlp.
     """
     ensure_directory_exists(output_path)
     logger.debug(f"Attempting to download from SoundCloud: {url}")
     try:
-        # Redirect stdout and stderr to DEVNULL to suppress scdl logs
-        subprocess.run(
-            ['scdl', '-l', url, '--path', output_path, '--onlymp3'],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        }
+        
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
         logger.info("✅ Successfully downloaded from SoundCloud!")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Failed to download from SoundCloud. Exit code: {e.returncode}")
     except Exception as e:
         logger.error(f"❌ Failed to download from SoundCloud {url}: {e}")
 
 
 def download_youtube(url: str, output_path: str = DOWNLOADS_DIR) -> None:
     """
-    Download the audio track from a YouTube video and convert to mp3.
+    Download the audio track from a YouTube video and convert to mp3 using yt-dlp.
     """
     ensure_directory_exists(output_path)
     logger.debug(f"Attempting to download from YouTube: {url}")
     try:
-        yt = YouTube(url)
-        video_stream = yt.streams.filter(only_audio=True).first()
-        out_file = video_stream.download(output_path=output_path)
-        base, _ = os.path.splitext(out_file)
-        new_file = base + '.mp3'
-        os.rename(out_file, new_file)
-        logger.info(f"✅ Successfully downloaded: {yt.title}!")
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        }
+        
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', 'Unknown Title')
+            logger.info(f"✅ Successfully downloaded: {title}!")
     except Exception as e:
         logger.error(f"❌ Error downloading from YouTube {url}: {e}")
 
@@ -325,7 +335,7 @@ Usage: python shazam.py [command] [options]
 Commands:
     🔍 scan                       Scan downloads directory and recognize all MP3
     ⬇️  download <url>            Download and process audio from YouTube or SoundCloud
-    🎯 recognize <file_path>      Recognize specific audio file
+    🎯 recognize <file_or_url>    Recognize specific audio file or download and recognize from URL
 
 Options:
     --debug                       Enable debug mode with detailed logging
@@ -336,6 +346,7 @@ Examples:
     python shazam.py download https://www.youtube.com/watch?v=...
     python shazam.py download https://soundcloud.com/... --debug
     python shazam.py recognize path/to/audio.mp3
+    python shazam.py recognize https://soundcloud.com/... 
     """)
 
 
@@ -363,12 +374,31 @@ def main() -> None:
     timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
     output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
 
+    # Special handling for download and recognize commands to support unquoted URLs
+    if command == 'download' or command == 'recognize':
+        # Determine the URL/file by reconstructing from sys.argv
+        # Skip 'python', 'shazam.py', 'command', and potentially '--debug'
+        start_idx = 2  # Skip program name and command
+        if '--debug' in sys.argv:
+            # If --debug is immediately after command, adjust accordingly
+            if sys.argv.index('--debug') == start_idx:
+                start_idx += 1
+        
+        # If we still have arguments left, reconstruct them
+        if len(sys.argv) > start_idx:
+            # Join all remaining arguments to handle spaces in URLs or file paths
+            url_or_file = ' '.join(sys.argv[start_idx:])
+        else:
+            url_or_file = None
+    else:
+        # For other commands, use argparse result
+        url_or_file = args.url_or_file
+
     if command == 'download':
-        if not args.url_or_file:
+        if not url_or_file:
             logger.error("Missing URL. Usage: python shazam.py download <url> [--debug]")
             sys.exit(1)
 
-        url = args.url_or_file
         try:
             with open(output_filename, "w", encoding="utf-8") as f:
                 f.write("===== Download Results ======\n\n")
@@ -376,20 +406,48 @@ def main() -> None:
             logger.error(f"Error creating output file {output_filename}: {e}")
             sys.exit(1)
 
-        download_from_url(url)
+        download_from_url(url_or_file)
         process_downloads()
 
     elif command in ['scan', 'scan-downloads']:
         logger.info(f"Scanning '{DOWNLOADS_DIR}' directory for MP3 files...")
         process_downloads()
         return
-
+    
     elif command == 'recognize':
-        if not args.url_or_file:
+        if not url_or_file:
             logger.error("Missing file path. Usage: python shazam.py recognize <file_path> [--debug]")
             sys.exit(1)
 
-        audio_file = args.url_or_file
+        audio_file = url_or_file
+        
+        # Check if the input is a URL
+        if audio_file.startswith('http://') or audio_file.startswith('https://'):
+            logger.info(f"URL detected: {audio_file}")
+            # Download from URL first
+            download_from_url(audio_file)
+            # Find the downloaded file in the downloads directory
+            mp3_files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp3')]
+            if not mp3_files:
+                logger.error(f"No MP3 files found in '{DOWNLOADS_DIR}' directory after download.")
+                sys.exit(1)
+            # Process only the most recently downloaded file 
+            # (assuming it's the one we just downloaded)
+            latest_file = max([os.path.join(DOWNLOADS_DIR, f) for f in mp3_files], 
+                              key=os.path.getmtime)
+            
+            try:
+                with open(output_filename, "w", encoding="utf-8") as f:
+                    f.write("===== Recognition Results ======\n\n")
+            except OSError as e:
+                logger.error(f"Error creating output file {output_filename}: {e}")
+                sys.exit(1)
+                
+            process_audio_file(latest_file, output_filename, 1, 1)
+            logger.info(f"\nResults saved to {output_filename}")
+            return
+        
+        # Handle local file
         if not os.path.exists(audio_file):
             logger.error(f"Error: File '{audio_file}' not found.")
             sys.exit(1)
@@ -404,6 +462,7 @@ def main() -> None:
         # Since we're processing a single file, pass file_index=1 and total_files=1
         process_audio_file(audio_file, output_filename, 1, 1)
         logger.info(f"\nResults saved to {output_filename}")
+        return
 
     else:
         logger.error(f"Unknown command: {command}")

@@ -20,9 +20,19 @@ command_exists() {
 setup_environment() {
   echo -e "${BLUE}Setting up environment...${NC}"
   
-  # Check for Python
-  if ! command_exists python3; then
-    echo "Python 3 is required but not installed. Please install Python 3.7+"
+  # Check for Python 3.11 or 3.12 first, then fall back to Python 3
+  PYTHON_CMD="python3"
+  if command_exists python3.11; then
+    PYTHON_CMD="python3.11"
+    echo "Using Python 3.11"
+  elif command_exists python3.12; then
+    PYTHON_CMD="python3.12"
+    echo "Using Python 3.12"
+  elif command_exists python3; then
+    PYTHON_CMD="python3"
+    echo "Using Python 3"
+  else
+    echo "Python 3 is required but not installed. Please install Python 3.11+"
     exit 1
   fi
   
@@ -44,7 +54,7 @@ setup_environment() {
   # Create virtual environment if it doesn't exist
   if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv venv
+    $PYTHON_CMD -m venv venv
   fi
   
   # Activate virtual environment
@@ -53,7 +63,7 @@ setup_environment() {
   
   # Install dependencies
   echo "Installing dependencies..."
-  pip install shazamio pydub yt-dlp ShazamApi
+  pip install -r requirements.txt
   
   echo -e "${GREEN}Environment setup complete!${NC}\n"
 }

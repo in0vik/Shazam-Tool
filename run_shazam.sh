@@ -63,7 +63,6 @@ setup_environment() {
   
   # Install dependencies
   echo "Installing dependencies..."
-  pip install -r requirements.txt
   
   echo -e "${GREEN}Environment setup complete!${NC}\n"
 }

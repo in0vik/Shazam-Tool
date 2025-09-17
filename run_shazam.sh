@@ -59,7 +59,11 @@ setup_environment() {
   
   # Activate virtual environment
   echo "Activating virtual environment..."
-  source venv/bin/activate
+  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+    source venv/Scripts/activate
+  else
+    source venv/bin/activate
+  fi
   
   # Install dependencies
   echo "Installing dependencies..."
@@ -71,7 +75,11 @@ setup_environment() {
 run_shazam() {
   # Ensure virtual environment is activated
   if [ -z "$VIRTUAL_ENV" ]; then
-    source venv/bin/activate
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+      source venv/Scripts/activate
+    else
+      source venv/bin/activate
+    fi
   fi
   
   # Run the Shazam tool with provided arguments
@@ -89,6 +97,7 @@ show_help() {
   echo "  download    - Download and analyze audio from URL"
   echo "               Example: ./run_shazam.sh download https://soundcloud.com/user/track"
   echo "  scan        - Process all downloaded files"
+  echo "  rescan      - Reprocess failed segments from previous scans"
   echo "  recognize   - Process a specific audio file"
   echo "               Example: ./run_shazam.sh recognize path/to/file.mp3"
   echo "  help        - Show this help information"
@@ -113,6 +122,9 @@ case "$1" in
     ;;
   "scan")
     run_shazam scan
+    ;;
+  "rescan")
+    run_shazam rescan
     ;;
   "recognize")
     if [ -z "$2" ]; then

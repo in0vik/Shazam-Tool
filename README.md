@@ -5,8 +5,11 @@
 ## ✨ Features
 
 - 🎧 Download audio from SoundCloud or YouTube URLs
-- 🎼 Identify songs using Shazam API
-- 💾 Save results to timestamped text files
+- 🎼 Identify songs using Shazam API with advanced timeout/retry logic
+- 📊 Smart status tracking (FOUND, NOT_FOUND, TIMEOUT, ERROR)
+- 🔄 Intelligent rescanning of failed segments only
+- 📋 Structured output with condensed tracklist and detailed scan log
+- 💾 Save results to organized text files named after source MP3s
 - 🚀 Easy setup and usage with provided shell script
 
 ## 🛠️ Requirements
@@ -57,6 +60,9 @@ chmod +x run_shazam.sh
 # Process all downloaded files
 ./run_shazam.sh scan
 
+# Rescan only failed segments from previous runs
+./run_shazam.sh rescan
+
 # Process a specific audio file
 ./run_shazam.sh recognize <file>
 
@@ -84,7 +90,15 @@ python shazam.py scan
 
 Processes all MP3 files in the Downloads directory.
 
-#### 3. Recognize Single File
+#### 3. Rescan Failed Segments
+
+```sh
+python shazam.py rescan
+```
+
+Intelligently rescans only TIMEOUT and ERROR segments from previous runs, preserving successful recognitions.
+
+#### 4. Recognize Single File
 
 ```sh
 python shazam.py recognize <file>
@@ -94,19 +108,40 @@ Processes a single audio file for song recognition.
 
 ## 📋 Output
 
-Results are saved in the `recognised-lists` directory with timestamped filenames in the format:
+Results are saved in the `recognised-lists` directory with files named after the source MP3:
 
 ```
-songs-DDMMYY-HHMMSS.txt
+{filename}.txt
 ```
 
-> ℹ️ The generated song list can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
+### File Structure
+
+Each result file contains two sections:
+
+**📃 Tracklist** - Condensed list of identified tracks (first occurrence only):
+```
+00:01:10 - Artist - Track Title
+00:04:20 - Another Artist - Another Track
+```
+
+**📊 Scan Log** - Detailed status for every 10-second segment:
+```
+00:00:00 - NOT_FOUND
+00:01:10 - FOUND
+00:01:20 - TIMEOUT
+00:01:30 - ERROR
+```
+
+> ℹ️ The tracklist can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
 
 ## 📝 Notes
 
-- The script splits audio into 1-minute segments for optimal recognition
-- Duplicate songs within the same mix are automatically filtered out
+- The script splits audio into 10-second segments for precise recognition
+- Uses 40-second timeout with 3 retries for robust API communication
+- Duplicate songs within the same mix are automatically filtered out in the tracklist
+- Failed segments can be reprocessed individually using the rescan feature
 - Large files are processed in chunks to manage memory efficiently
+- Status tracking allows for intelligent recovery from network issues or API timeouts
 
 ## 🤝 Contributing
 

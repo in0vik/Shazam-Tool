@@ -6,6 +6,10 @@ recognised-lists/
 *.txt
 venv/
 
+# Claude Code files
+.claude/
+CLAUDE.md
+
 # macOS system files
 .DS_Store
 .AppleDouble

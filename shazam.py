@@ -11,6 +11,7 @@ from pydub import AudioSegment
 from shazamio import Shazam
 from yt_dlp import YoutubeDL
 
+
 # Duration of each segment in milliseconds (10 seconds)
 SEGMENT_LENGTH = 10 * 1000
 
@@ -66,6 +67,8 @@ def ensure_directory_exists(dir_path: str) -> None:
     logger.debug(f"Ensured directory exists: {dir_path}")
 
 
+
+
 def remove_files(directory: str) -> None:
     """
     Removes all files in specified directory. If directory doesn't exist,
@@ -112,25 +115,44 @@ def analyze_result_file(result_file_path: str) -> dict:
 
     rescan_segments = []
     max_segment = 0
+    in_scan_log = False
 
     try:
         with open(result_file_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if " - " in line and not line.startswith("====="):
-                    parts = line.split(" - ", 1)
+
+                # Identify when we're in the scan log section
+                if line == "===== Scan Log =====":
+                    in_scan_log = True
+                    continue
+                elif line.startswith("=====") and in_scan_log:
+                    # End of scan log section
+                    break
+
+                # Only process lines when we're in the scan log section
+                if in_scan_log and " - " in line and not line.startswith("====="):
+                    parts = line.split(" - ")
                     if len(parts) >= 2:
                         timestamp_str = parts[0]
-                        status = parts[1]
+                        # Handle multiple formats: old, new with tracks, and validation statuses
+                        if len(parts) >= 3 and parts[1] in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"]:
+                            status = parts[1]  # FOUND, FOUND_VALIDATED, etc.
+                        else:
+                            status = parts[1]  # NOT_FOUND, TIMEOUT, ERROR
 
                         # Calculate segment number from timestamp
-                        timestamp_seconds = parse_timestamp(timestamp_str)
-                        segment_num = int(timestamp_seconds / (SEGMENT_LENGTH / 1000)) + 1
-                        max_segment = max(max_segment, segment_num)
+                        try:
+                            timestamp_seconds = parse_timestamp(timestamp_str)
+                            segment_num = int(timestamp_seconds / (SEGMENT_LENGTH / 1000)) + 1
+                            max_segment = max(max_segment, segment_num)
 
-                        # Mark segments that need rescanning (TIMEOUT and ERROR for rescan mode)
-                        if status in ["TIMEOUT", "ERROR"]:
-                            rescan_segments.append(segment_num)
+                            # Mark segments that need rescanning (TIMEOUT and ERROR for rescan mode)
+                            if status in ["TIMEOUT", "ERROR"]:
+                                rescan_segments.append(segment_num)
+                        except (ValueError, IndexError):
+                            # Skip malformed timestamp lines
+                            continue
 
     except Exception as e:
         logger.debug(f"Error analyzing result file {result_file_path}: {e}")
@@ -142,7 +164,7 @@ def analyze_result_file(result_file_path: str) -> dict:
 def read_result_file(result_file_path: str) -> dict:
     """
     Reads existing result file and returns structured data.
-    Parses the new format with separate Tracklist and Scan Log sections.
+    Parses both old and new format with separate Tracklist and Scan Log sections.
     """
     if not os.path.exists(result_file_path):
         return {"header": "", "segments": {}}
@@ -150,7 +172,7 @@ def read_result_file(result_file_path: str) -> dict:
     segments = {}
     header = ""
     current_section = "none"
-    track_data = {}  # timestamp -> track_name
+    track_data = {}  # timestamp -> {"track": track_name}
 
     try:
         with open(result_file_path, "r", encoding="utf-8") as f:
@@ -168,31 +190,52 @@ def read_result_file(result_file_path: str) -> dict:
             elif line == "===== Scan Log =====":
                 current_section = "scan_log"
             # Parse content based on current section
-            elif " - " in line and not line.startswith("====="):
-                parts = line.split(" - ", 1)
+            elif " - " in line and not line.startswith("=====") and not line.startswith("nr - time") and not line.startswith("number - time"):
+                # First split to get timestamp, then handle the rest based on section
+                parts = line.split(" - ")
                 if len(parts) >= 2:
                     timestamp_str = parts[0]
 
                     if current_section == "tracklist":
-                        # Track info: "timestamp - artist - title"
-                        track_name = parts[1]
-                        track_data[timestamp_str] = track_name
-                    elif current_section == "scan_log":
-                        # Status info: "timestamp - status"
-                        status = parts[1]
-                        # Initialize segment with status
-                        if timestamp_str not in segments:
-                            segments[timestamp_str] = {"status": status, "track": ""}
+                        # Handle both old and new formats
+                        if timestamp_str.isdigit():
+                            # New format: "01 - 00:01:10 - Artist - Title" (genre removed)
+                            if len(parts) >= 4:
+                                timestamp_str = parts[1]
+                                artist = parts[2].strip()
+                                title = " - ".join(parts[3:])
+                                track_name = f"{artist} - {title}"
+                                track_data[timestamp_str] = {"track": track_name}
                         else:
-                            segments[timestamp_str]["status"] = status
+                            # Old format: "timestamp - artist - title"
+                            track_name = " - ".join(parts[1:])
+                            track_data[timestamp_str] = {"track": track_name}
+                    elif current_section == "scan_log":
+                        # Handle multiple formats: old "timestamp - status" and new "timestamp - FOUND_STATUS - track_name"
+                        if len(parts) >= 3 and parts[1] in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"]:
+                            # New format with validation: "timestamp - FOUND_STATUS - track_name"
+                            status = parts[1]
+                            track_name = " - ".join(parts[2:])  # Join remaining parts in case track name contains " - "
+                            if timestamp_str not in segments:
+                                segments[timestamp_str] = {"status": status, "track": track_name}
+                            else:
+                                segments[timestamp_str]["status"] = status
+                                segments[timestamp_str]["track"] = track_name
+                        else:
+                            # Old format: "timestamp - status" (for NOT_FOUND, TIMEOUT, ERROR)
+                            status = parts[1]
+                            if timestamp_str not in segments:
+                                segments[timestamp_str] = {"status": status, "track": ""}
+                            else:
+                                segments[timestamp_str]["status"] = status
 
         # Merge track data with segments
-        for timestamp, track_name in track_data.items():
+        for timestamp, track_info in track_data.items():
             if timestamp in segments:
-                segments[timestamp]["track"] = track_name
+                segments[timestamp]["track"] = track_info["track"]
             else:
                 # Track found but no scan log entry - assume FOUND status
-                segments[timestamp] = {"status": "FOUND", "track": track_name}
+                segments[timestamp] = {"status": "FOUND", "track": track_info["track"]}
 
         # Fill in missing track data for segments that don't have tracks
         for timestamp, segment in segments.items():
@@ -200,7 +243,7 @@ def read_result_file(result_file_path: str) -> dict:
                 if segment["status"] == "FOUND":
                     segment["track"] = "Unknown Track"
                 else:
-                    segment["track"] = segment["status"]
+                    segment["track"] = ""
 
     except Exception as e:
         logger.debug(f"Error reading result file {result_file_path}: {e}")
@@ -210,9 +253,9 @@ def read_result_file(result_file_path: str) -> dict:
 
 def generate_tracklist_and_log(segments: dict) -> tuple:
     """
-    Generates condensed tracklist and scan log from segment data.
+    Generates condensed tracklist with numbered rows and aligned columns, plus scan log from segment data.
     """
-    tracklist = []
+    tracklist_data = []
     scan_log = []
     seen_tracks = set()
 
@@ -225,12 +268,43 @@ def generate_tracklist_and_log(segments: dict) -> tuple:
         track = data["track"]
 
         # Add to scan log with proper status
-        scan_log.append(f"{timestamp} - {status}")
+        if status in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"] and track:
+            scan_log.append(f"{timestamp} - {status} - {track}")
+        else:
+            scan_log.append(f"{timestamp} - {status}")
 
-        # Add to tracklist only if found and not already seen
-        if status == "FOUND" and track not in seen_tracks:
-            tracklist.append(f"{timestamp} - {track}")
+        # Add to tracklist only if found (but not false positive) and not already seen
+        if status in ["FOUND", "FOUND_VALIDATED"] and track not in seen_tracks:
+            # Split track into artist and title
+            if " - " in track:
+                artist, title = track.split(" - ", 1)
+            else:
+                artist = "Unknown Artist"
+                title = track
+
+            tracklist_data.append({
+                "timestamp": timestamp,
+                "artist": artist,
+                "title": title
+            })
             seen_tracks.add(track)
+
+    # Generate formatted tracklist without header and minimal spacing
+    tracklist = []
+
+    # Add tracks with compact formatting
+    for idx, item in enumerate(tracklist_data, 1):
+        # Format number with leading spaces instead of zeros
+        if idx < 10:
+            number = f"  {idx}"  # 2 spaces for single digits
+        elif idx < 100:
+            number = f" {idx}"   # 1 space for double digits
+        else:
+            number = f"{idx}"    # no space for triple digits
+
+        # Simple format: number - time - artist - title (no extra padding)
+        formatted_line = f"{number} - {item['timestamp']} - {item['artist']} - {item['title']}"
+        tracklist.append(formatted_line)
 
     return tracklist, scan_log
 
@@ -368,10 +442,10 @@ def segment_audio(audio_file: str, output_directory: str = "tmp", num_threads: i
         logger.error(f"Failed to segment audio file {audio_file}: {e}")
 
 
-async def get_name(file_path: str, max_retries: int = 3, timeout: int = 40) -> str:
+async def get_name(file_path: str, max_retries: int = 3, timeout: int = 40) -> dict:
     """
     Uses Shazam to recognize the song with retry logic, timeout, and error handling.
-    Returns either 'Artist - Track Title', 'TIMEOUT', 'ERROR', or 'NOT_FOUND' based on failure type.
+    Returns dict with 'status' and 'track' keys, or dict with error status.
     """
     import time
     shazam = Shazam()
@@ -394,12 +468,14 @@ async def get_name(file_path: str, max_retries: int = 3, timeout: int = 40) -> s
                     await asyncio.sleep(2)  # Increased delay between retries
                     continue
                 logger.debug("Recognition failed after all attempts - no track data")
-                return "NOT_FOUND"
+                return {"status": "NOT_FOUND", "track": ""}
 
             title = data['track']['title']
             subtitle = data['track']['subtitle']
-            result = f"{subtitle} - {title}"
-            logger.debug(f"Recognition successful in {elapsed:.2f}s: {result}")
+
+            track_string = f"{subtitle} - {title}"
+            result = {"status": "FOUND", "track": track_string}
+            logger.debug(f"Recognition successful in {elapsed:.2f}s: {track_string}")
             return result
 
         except asyncio.TimeoutError:
@@ -410,7 +486,7 @@ async def get_name(file_path: str, max_retries: int = 3, timeout: int = 40) -> s
                 await asyncio.sleep(3)  # Longer delay after timeout
                 continue
             logger.warning("Recognition failed after all attempts due to timeout")
-            return "TIMEOUT"
+            return {"status": "TIMEOUT", "track": ""}
 
         except Exception as e:
             elapsed = time.time() - start_time
@@ -419,7 +495,7 @@ async def get_name(file_path: str, max_retries: int = 3, timeout: int = 40) -> s
                 await asyncio.sleep(2)
                 continue
             logger.warning("Recognition failed after all attempts due to exception")
-            return "ERROR"
+            return {"status": "ERROR", "track": ""}
 
 
 def process_audio_file(audio_file: str, output_filename: str, file_index: int, total_files: int, rescan_mode: bool = False) -> None:
@@ -478,29 +554,29 @@ def process_audio_file(audio_file: str, output_filename: str, file_index: int, t
 
             # Use modern asyncio pattern instead of deprecated get_event_loop()
             try:
-                track_name = asyncio.run(get_name(segment_path))
-                # get_name() now returns specific status strings
-                if track_name in ["TIMEOUT", "ERROR", "NOT_FOUND"]:
-                    segment_status = track_name
-                else:
-                    # If it's not a status string, it's a successful recognition
-                    segment_status = "FOUND"
+                result = asyncio.run(get_name(segment_path))
+                # get_name() now returns dict with status and track
+                segment_status = result["status"]
+                track_name = result["track"]
             except asyncio.TimeoutError:
-                track_name = "TIMEOUT"
                 segment_status = "TIMEOUT"
+                track_name = ""
             except Exception as seg_error:
                 logger.debug(f"Segment {idx} error: {seg_error}")
-                track_name = "ERROR"
                 segment_status = "ERROR"
+                track_name = ""
 
             # Build the progress output with timestamp and status
-            progress_str = f"[{idx}/{total_segments}] {timestamp}: {track_name}"
+            if segment_status == "FOUND":
+                progress_str = f"[{idx}/{total_segments}] {timestamp}: {track_name}"
+            else:
+                progress_str = f"[{idx}/{total_segments}] {timestamp}: {segment_status}"
             logger.info(progress_str)
 
             # Update file_data structure
             file_data["segments"][timestamp] = {"status": segment_status, "track": track_name}
 
-            if track_name not in ["NOT_FOUND", "TIMEOUT", "ERROR"] and track_name not in unique_tracks:
+            if segment_status == "FOUND" and track_name not in unique_tracks:
                 unique_tracks.add(track_name)
                 logger.debug(f"Added new unique track at {timestamp}: {track_name}")
             else:
@@ -568,6 +644,333 @@ def process_downloads(rescan_mode: bool = False) -> None:
     logger.info(f"\n5/5 [DONE] All files successfully {action}ed!")
 
 
+def analyze_false_positive_candidates(result_file_path: str, threshold: int = 3) -> dict:
+    """
+    Analyzes existing result file to identify potential false positive candidates.
+    Returns dict with tracks that appear <= threshold times, ranked by suspicion level.
+    """
+    if not os.path.exists(result_file_path):
+        logger.error(f"Result file not found: {result_file_path}")
+        return {"candidates": [], "summary": {}}
+
+    track_counts = {}
+    track_positions = {}
+    in_scan_log = False
+
+    try:
+        with open(result_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+
+                if line == "===== Scan Log =====":
+                    in_scan_log = True
+                    continue
+                elif line.startswith("=====") and in_scan_log:
+                    break
+
+                # Check for any FOUND variant (FOUND, FOUND_VALIDATED, FOUND_FALSE_POSITIVE, FOUND_UNCERTAIN)
+                if in_scan_log and (" - FOUND" in line):
+                    parts_split = line.split(" - ")
+
+                    if len(parts_split) >= 3:
+                        timestamp = parts_split[0]
+                        status = parts_split[1]
+                        track_name = " - ".join(parts_split[2:])
+
+                        # Only count legitimate tracks (exclude false positives from count)
+                        if status in ["FOUND", "FOUND_VALIDATED"]:
+                            if track_name not in track_counts:
+                                track_counts[track_name] = 0
+                                track_positions[track_name] = []
+
+                            track_counts[track_name] += 1
+
+                            # Convert timestamp to seconds for analysis
+                            time_parts = timestamp.split(':')
+                            seconds = int(time_parts[0])*3600 + int(time_parts[1])*60 + int(time_parts[2])
+                            track_positions[track_name].append((timestamp, seconds))
+
+        # Identify validation candidates
+        candidates = []
+        for track_name, count in track_counts.items():
+            if count <= threshold:
+                positions = sorted(track_positions[track_name], key=lambda x: x[1])
+
+                candidate = {
+                    'track': track_name,
+                    'count': count,
+                    'positions': positions,
+                    'start_timestamp': positions[0][0],
+                    'end_timestamp': positions[-1][0] if count > 1 else positions[0][0],
+                    'duration_seconds': positions[-1][1] - positions[0][1] if count > 1 else 0,
+                    'suspicion_level': 'HIGH' if count == 1 else 'MEDIUM' if count == 2 else 'LOW'
+                }
+                candidates.append(candidate)
+
+        # Sort by suspicion level (count) and then by timestamp
+        candidates.sort(key=lambda x: (x['count'], x['start_timestamp']))
+
+        summary = {
+            'total_unique_tracks': len(track_counts),
+            'validation_candidates': len(candidates),
+            'high_suspicion': len([c for c in candidates if c['count'] == 1]),
+            'medium_suspicion': len([c for c in candidates if c['count'] == 2]),
+            'low_suspicion': len([c for c in candidates if c['count'] == 3])
+        }
+
+        logger.info(f"Analysis complete: {len(candidates)} candidates found (threshold: <={threshold} occurrences)")
+
+        return {"candidates": candidates, "summary": summary}
+
+    except Exception as e:
+        logger.error(f"Error analyzing result file {result_file_path}: {e}")
+        return {"candidates": [], "summary": {}}
+
+
+def create_extended_segment(audio_file: str, target_timestamp: str, mode: str = "both",
+                          extension_seconds: int = 20) -> str:
+    """
+    Creates an extended audio segment by merging the target segment with surrounding segments.
+
+    Args:
+        audio_file: Path to the original audio file
+        target_timestamp: Target timestamp (e.g., "00:01:30")
+        mode: "before", "after", or "both" - which direction to extend
+        extension_seconds: How many seconds to extend in each direction
+
+    Returns:
+        Path to the created extended segment file
+    """
+    try:
+        # Parse target timestamp to get segment start time in seconds
+        time_parts = target_timestamp.split(':')
+        target_seconds = int(time_parts[0])*3600 + int(time_parts[1])*60 + int(time_parts[2])
+
+        # Calculate extended segment boundaries
+        if mode == "before":
+            start_seconds = max(0, target_seconds - extension_seconds)
+            end_seconds = target_seconds + (SEGMENT_LENGTH // 1000)  # Original segment length
+        elif mode == "after":
+            start_seconds = target_seconds
+            end_seconds = target_seconds + (SEGMENT_LENGTH // 1000) + extension_seconds
+        else:  # both
+            start_seconds = max(0, target_seconds - extension_seconds)
+            end_seconds = target_seconds + (SEGMENT_LENGTH // 1000) + extension_seconds
+
+        # Load audio and extract extended segment
+        audio = AudioSegment.from_file(audio_file, format="mp3")
+        start_ms = start_seconds * 1000
+        end_ms = min(end_seconds * 1000, len(audio))
+
+        extended_segment = audio[start_ms:end_ms]
+
+        # Create output filename
+        ensure_directory_exists("tmp")
+        output_filename = f"tmp/extended_{target_timestamp.replace(':', '')}__{mode}.mp3"
+
+        # Export extended segment
+        extended_segment.export(output_filename, format="mp3")
+
+        duration = (end_ms - start_ms) / 1000
+        logger.debug(f"Created extended segment: {output_filename} ({duration:.1f}s, mode: {mode})")
+
+        return output_filename
+
+    except Exception as e:
+        logger.error(f"Failed to create extended segment for {target_timestamp}: {e}")
+        return ""
+
+
+def validate_segment_with_extended_audio(audio_file: str, candidate: dict) -> dict:
+    """
+    Validates a false positive candidate by re-recognizing with extended audio segments.
+
+    Args:
+        audio_file: Path to the original audio file
+        candidate: Candidate dict from analyze_false_positive_candidates
+
+    Returns:
+        Dict with validation results
+    """
+    original_track = candidate['track']
+    target_timestamp = candidate['start_timestamp']
+
+    logger.info(f"Validating: {target_timestamp} - {original_track}")
+
+    validation_results = {
+        'original_track': original_track,
+        'timestamp': target_timestamp,
+        'extended_segments': {},
+        'validation_status': 'UNKNOWN',
+        'confidence': 'LOW'
+    }
+
+    # Test different extension modes
+    modes = ["before", "after", "both"]
+
+    for mode in modes:
+        try:
+            # Create extended segment
+            extended_file = create_extended_segment(audio_file, target_timestamp, mode, 20)
+            if not extended_file:
+                continue
+
+            # Recognize with extended segment
+            logger.debug(f"Recognizing extended segment ({mode}): {extended_file}")
+            result = asyncio.run(get_name(extended_file))
+
+            validation_results['extended_segments'][mode] = {
+                'status': result['status'],
+                'track': result['track'],
+                'matches_original': result['track'] == original_track if result['status'] == 'FOUND' else False
+            }
+
+            # Clean up extended segment file
+            try:
+                os.remove(extended_file)
+            except:
+                pass
+
+        except Exception as e:
+            logger.warning(f"Error validating with {mode} extension: {e}")
+            validation_results['extended_segments'][mode] = {
+                'status': 'ERROR',
+                'track': '',
+                'matches_original': False
+            }
+
+    # Analyze validation results
+    found_results = [r for r in validation_results['extended_segments'].values()
+                    if r['status'] == 'FOUND']
+
+    if not found_results:
+        validation_results['validation_status'] = 'NO_EXTENDED_RECOGNITION'
+        validation_results['confidence'] = 'HIGH'  # Likely false positive
+    else:
+        matches = [r for r in found_results if r['matches_original']]
+        different_tracks = [r for r in found_results if not r['matches_original']]
+
+        if len(matches) >= 2:  # Multiple extensions confirm original
+            validation_results['validation_status'] = 'CONFIRMED_VALID'
+            validation_results['confidence'] = 'HIGH'
+        elif len(different_tracks) >= 2:  # Multiple extensions disagree
+            validation_results['validation_status'] = 'LIKELY_FALSE_POSITIVE'
+            validation_results['confidence'] = 'HIGH'
+            # Use most common alternative track
+            alt_tracks = [r['track'] for r in different_tracks]
+            validation_results['suggested_track'] = max(set(alt_tracks), key=alt_tracks.count)
+        else:
+            validation_results['validation_status'] = 'UNCERTAIN'
+            validation_results['confidence'] = 'MEDIUM'
+
+    logger.info(f"Validation result: {validation_results['validation_status']} - {original_track}")
+
+    return validation_results
+
+
+def validate_single_file(audio_file_path: str, result_file_path: str, threshold: int) -> None:
+    """
+    Validates a single audio file for false positives and updates the scan log with validation results.
+
+    Args:
+        audio_file_path: Path to the audio file
+        result_file_path: Path to the corresponding result file
+        threshold: Maximum occurrences for validation candidates
+    """
+    logger.info(f"[VALIDATE] Starting validation of {os.path.basename(audio_file_path)}")
+    logger.info(f"[RESULTS] Using result file: {result_file_path}")
+
+    # Read existing result file
+    file_data = read_result_file(result_file_path)
+
+    # Analyze candidates
+    analysis = analyze_false_positive_candidates(result_file_path, threshold)
+    candidates = analysis['candidates']
+    summary = analysis['summary']
+
+    if not candidates:
+        logger.info("[RESULT] No validation candidates found - all tracks appear legitimate!")
+        return
+
+    logger.info(f"[CANDIDATES] Found {len(candidates)} validation candidates:")
+    logger.info(f"  HIGH suspicion (1x): {summary['high_suspicion']} tracks")
+    logger.info(f"  MEDIUM suspicion (2x): {summary['medium_suspicion']} tracks")
+    logger.info(f"  LOW suspicion (3x): {summary['low_suspicion']} tracks")
+
+    # Validate each candidate and track changes
+    validation_results = []
+    updated_segments = file_data['segments'].copy()
+
+    for i, candidate in enumerate(candidates, 1):
+        logger.info(f"\n[{i}/{len(candidates)}] Validating: {candidate['track']}")
+
+        result = validate_segment_with_extended_audio(audio_file_path, candidate)
+        validation_results.append(result)
+
+        # Update scan log entry based on validation result
+        timestamp = result['timestamp']
+        original_track = result['original_track']
+        validation_status = result['validation_status']
+
+        if timestamp in updated_segments:
+            if validation_status == 'LIKELY_FALSE_POSITIVE':
+                # Update status to indicate false positive
+                updated_segments[timestamp]['status'] = 'FOUND_FALSE_POSITIVE'
+                # Keep original track name but mark as false positive
+                updated_segments[timestamp]['track'] = original_track
+
+                # If we have a suggested alternative, show it
+                if 'suggested_track' in result:
+                    logger.info(f"      > Suggested alternative: {result['suggested_track']}")
+
+            elif validation_status == 'NO_EXTENDED_RECOGNITION':
+                # Mark as false positive - extended segments couldn't recognize anything
+                updated_segments[timestamp]['status'] = 'FOUND_FALSE_POSITIVE'
+                updated_segments[timestamp]['track'] = original_track
+
+            elif validation_status == 'CONFIRMED_VALID':
+                # Mark as validated and confirmed
+                updated_segments[timestamp]['status'] = 'FOUND_VALIDATED'
+                updated_segments[timestamp]['track'] = original_track
+
+            elif validation_status == 'UNCERTAIN':
+                # Mark as suspicious but uncertain
+                updated_segments[timestamp]['status'] = 'FOUND_UNCERTAIN'
+                updated_segments[timestamp]['track'] = original_track
+
+    # Generate summary report
+    logger.info("\n[REPORT] Validation Results Summary:")
+
+    confirmed_false = [r for r in validation_results if r['validation_status'] == 'LIKELY_FALSE_POSITIVE']
+    no_recognition = [r for r in validation_results if r['validation_status'] == 'NO_EXTENDED_RECOGNITION']
+    confirmed_valid = [r for r in validation_results if r['validation_status'] == 'CONFIRMED_VALID']
+    uncertain = [r for r in validation_results if r['validation_status'] == 'UNCERTAIN']
+
+    total_false_positives = len(confirmed_false) + len(no_recognition)
+
+    logger.info(f"  FALSE POSITIVES: {total_false_positives} tracks")
+    for result in confirmed_false + no_recognition:
+        logger.info(f"    {result['timestamp']}: {result['original_track']}")
+        if 'suggested_track' in result:
+            logger.info(f"      > Suggested: {result['suggested_track']}")
+
+    logger.info(f"  CONFIRMED VALID: {len(confirmed_valid)} tracks")
+    for result in confirmed_valid:
+        logger.info(f"    {result['timestamp']}: {result['original_track']}")
+
+    logger.info(f"  UNCERTAIN: {len(uncertain)} tracks")
+    for result in uncertain:
+        logger.info(f"    {result['timestamp']}: {result['original_track']}")
+
+    # Write updated result file with validation statuses
+    logger.info(f"\n[UPDATE] Updating scan log with validation results...")
+    write_result_file(result_file_path, file_data['header'], updated_segments)
+
+    logger.info(f"[DONE] Validation complete for {os.path.basename(audio_file_path)}!")
+    logger.info(f"  > Updated {len(validation_results)} entries in scan log")
+    logger.info(f"  > {total_false_positives} false positives marked, {len(confirmed_valid)} confirmed valid")
+
+
 def print_usage() -> None:
     """
     Displays script usage instructions.
@@ -575,44 +978,78 @@ def print_usage() -> None:
     print("""
 [MUSIC] Shazam Tool [MUSIC]
 
-Usage: python shazam.py [command] [options]
+Usage: python shazam.py [command1] [command2] ... [file/url] [options]
 
 Commands:
     [SCAN] scan                       Scan downloads directory and recognize all MP3
     [RESCAN] rescan                   Rescan only failed segments (timeout/error)
+    [VALIDATE] validate [audio_file]  Validate potential false positives with extended segments
     [DOWN] download <url>            Download and process audio from YouTube or SoundCloud
     [TARGET] recognize <file_or_url>    Recognize specific audio file or download and recognize from URL
 
+Chainable Commands (NEW!):
+    python shazam.py scan rescan validate            # Scan -> Rescan -> Validate all
+    python shazam.py recognize file.mp3 rescan validate  # Recognize -> Rescan -> Validate
+    python shazam.py scan validate                   # Scan -> Validate all
+    python shazam.py rescan validate                 # Rescan -> Validate all
+
 Options:
     --debug                       Enable debug mode with detailed logging
+    --threshold <n>               Max occurrences for validation candidates (default: 3)
 
-Examples:
+Single Command Examples:
     python shazam.py scan
     python shazam.py scan --debug
+    python shazam.py validate
+    python shazam.py validate --threshold 1
+    python shazam.py validate "downloads/mix.mp3"
+    python shazam.py validate "path/to/audio.mp3" --threshold 2 --debug
     python shazam.py download https://www.youtube.com/watch?v=...
     python shazam.py download https://soundcloud.com/... --debug
     python shazam.py recognize path/to/audio.mp3
-    python shazam.py recognize https://soundcloud.com/... 
+    python shazam.py recognize https://soundcloud.com/...
     """)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Shazam Tool', add_help=False)
-    parser.add_argument('command', nargs='?', help='scan, download, or recognize')
+    parser.add_argument('commands', nargs='*', help='Commands: scan, download, recognize, rescan, validate')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode with detailed logging')
-    parser.add_argument('url_or_file', nargs='?', help='URL or file path, depending on command')
+    parser.add_argument('--threshold', type=int, default=3, help='Max occurrences for validation candidates')
 
     # Parse known args to avoid error with unrecognized args
     args, unknown = parser.parse_known_args()
 
-    if not args.command:
+    if not args.commands:
         print_usage()
         sys.exit(1)
 
     # Set up logging based on debug flag
     setup_logging(args.debug)
 
-    command = args.command
+    # Parse commands and detect file/URL
+    commands = []
+    url_or_file = None
+
+    # Process all arguments to separate commands from file/URL
+    all_args = args.commands + unknown
+    valid_commands = ['scan', 'download', 'recognize', 'rescan', 'validate']
+
+    for arg in all_args:
+        if arg in valid_commands:
+            commands.append(arg)
+        elif not url_or_file:
+            # First non-command argument is likely the file/URL
+            url_or_file = arg
+
+    if not commands:
+        print_usage()
+        sys.exit(1)
+
+    # For legacy compatibility, if only one argument and it's not a command, treat as old format
+    if len(args.commands) == 1 and args.commands[0] not in valid_commands:
+        print_usage()
+        sys.exit(1)
     output_dir = "recognised-lists"
     ensure_directory_exists(output_dir)
 
@@ -620,25 +1057,24 @@ def main() -> None:
     timestamp = datetime.now().strftime("%d%m%y-%H%M%S")
     output_filename = os.path.join(output_dir, f"songs-{timestamp}.txt")
 
-    # Special handling for download and recognize commands to support unquoted URLs
-    if command == 'download' or command == 'recognize':
-        # Determine the URL/file by reconstructing from sys.argv
-        # Skip 'python', 'shazam.py', 'command', and potentially '--debug'
-        start_idx = 2  # Skip program name and command
-        if '--debug' in sys.argv:
-            # If --debug is immediately after command, adjust accordingly
-            if sys.argv.index('--debug') == start_idx:
-                start_idx += 1
+    logger.info(f"[CHAIN] Executing command chain: {' -> '.join(commands)}")
 
-        # If we still have arguments left, reconstruct them
-        if len(sys.argv) > start_idx:
-            # Join all remaining arguments to handle spaces in URLs or file paths
-            url_or_file = ' '.join(sys.argv[start_idx:])
-        else:
-            url_or_file = None
-    else:
-        # For other commands, use argparse result
-        url_or_file = args.url_or_file
+    # Execute commands in sequence
+    for idx, command in enumerate(commands, 1):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"[{idx}/{len(commands)}] Executing: {command}")
+        logger.info(f"{'='*60}")
+
+        # Execute individual command
+        execute_single_command(command, url_or_file, args, output_filename)
+
+        logger.info(f"[{idx}/{len(commands)}] Completed: {command}")
+
+    logger.info(f"\n[CHAIN] All commands completed successfully: {' -> '.join(commands)}")
+
+
+def execute_single_command(command: str, url_or_file: str, args, output_filename: str) -> None:
+    """Execute a single command with the given parameters."""
 
     if command == 'download':
         if not url_or_file:
@@ -663,6 +1099,67 @@ def main() -> None:
     elif command == 'rescan':
         logger.info(f"Rescanning failed segments in '{DOWNLOADS_DIR}' directory...")
         process_downloads(rescan_mode=True)
+        return
+
+    elif command == 'validate':
+        if url_or_file:
+            # Single file validation
+            audio_file_path = url_or_file
+
+            # Handle local file path
+            if not os.path.exists(audio_file_path):
+                logger.error(f"Audio file not found: {audio_file_path}")
+                sys.exit(1)
+
+            # Find corresponding result file
+            audio_basename = os.path.splitext(os.path.basename(audio_file_path))[0]
+            result_file_path = os.path.join("recognised-lists", f"{audio_basename}.txt")
+
+            if not os.path.exists(result_file_path):
+                logger.error(f"Result file not found: {result_file_path}")
+                logger.error("Please run a scan first to generate results before validation")
+                sys.exit(1)
+
+            # Validate single file
+            validate_single_file(audio_file_path, result_file_path, args.threshold)
+
+        else:
+            # Validate all files in downloads directory
+            ensure_directory_exists(DOWNLOADS_DIR)
+            ensure_directory_exists("recognised-lists")
+
+            mp3_files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp3')]
+            if not mp3_files:
+                logger.error(f"No MP3 files found in '{DOWNLOADS_DIR}' directory.")
+                sys.exit(1)
+
+            # Find MP3 files that have corresponding result files
+            valid_files = []
+            for mp3_file in mp3_files:
+                audio_basename = os.path.splitext(mp3_file)[0]
+                result_file_path = os.path.join("recognised-lists", f"{audio_basename}.txt")
+                if os.path.exists(result_file_path):
+                    audio_file_path = os.path.join(DOWNLOADS_DIR, mp3_file)
+                    valid_files.append((audio_file_path, result_file_path))
+
+            if not valid_files:
+                logger.error("No result files found for MP3 files in downloads directory.")
+                logger.error("Please run a scan first to generate results before validation")
+                sys.exit(1)
+
+            logger.info(f"[VALIDATE] Starting bulk validation of {len(valid_files)} file(s)")
+            logger.info(f"[THRESHOLD] Validation threshold: <={args.threshold} occurrences")
+
+            # Validate each file
+            for idx, (audio_file_path, result_file_path) in enumerate(valid_files, 1):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"[{idx}/{len(valid_files)}] Validating: {os.path.basename(audio_file_path)}")
+                logger.info(f"{'='*60}")
+
+                validate_single_file(audio_file_path, result_file_path, args.threshold)
+
+            logger.info(f"\n[DONE] Bulk validation complete! Processed {len(valid_files)} file(s)")
+
         return
 
     elif command == 'recognize':

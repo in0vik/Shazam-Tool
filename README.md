@@ -8,7 +8,8 @@
 - 🎼 Identify songs using Shazam API with advanced timeout/retry logic
 - 📊 Smart status tracking (FOUND, NOT_FOUND, TIMEOUT, ERROR)
 - 🔄 Intelligent rescanning of failed segments only
-- 📋 Structured output with condensed tracklist and detailed scan log
+- 🔍 **False positive validation** with extended audio segment analysis
+- 📋 **Formatted tracklist** with numbered rows and clean layout
 - 💾 Save results to organized text files named after source MP3s
 - 🚀 Easy setup and usage with provided shell script
 
@@ -66,6 +67,13 @@ chmod +x run_shazam.sh
 # Process a specific audio file
 ./run_shazam.sh recognize <file>
 
+# Validate tracks for false positives
+./run_shazam.sh validate <file>
+
+# Chainable commands (NEW!)
+./run_shazam.sh scan rescan validate
+./run_shazam.sh recognize file.mp3 rescan validate
+
 # Show help information
 ./run_shazam.sh help
 ```
@@ -106,6 +114,47 @@ python shazam.py recognize <file>
 
 Processes a single audio file for song recognition.
 
+#### 5. Validate False Positives
+
+```sh
+python shazam.py validate <file> [--threshold 3]
+```
+
+Validates tracks that appear infrequently (≤ threshold occurrences) by re-recognizing them with extended audio segments. Helps identify and mark false positive detections.
+
+**Options:**
+- `--threshold`: Maximum occurrences for validation candidates (default: 3)
+- Omit `<file>` to validate all files in downloads directory
+
+**How it works:**
+- Identifies tracks appearing ≤ threshold times (likely false positives)
+- Creates extended 20-50 second segments around suspicious detections
+- Re-recognizes with Shazam using longer audio context
+- Updates scan log with validation statuses:
+  - `FOUND_FALSE_POSITIVE` - Detected as false positive
+  - `FOUND_VALIDATED` - Confirmed as legitimate
+  - `FOUND_UNCERTAIN` - Unclear validation result
+
+#### 6. Chainable Commands (NEW!)
+
+Execute multiple commands in sequence for streamlined workflows:
+
+```sh
+# Complete workflow: scan all files, rescan failures, validate results
+python shazam.py scan rescan validate
+
+# Process specific file and validate
+python shazam.py recognize file.mp3 rescan validate
+
+# Quick scan and validation
+python shazam.py scan validate
+
+# Rescan failures and validate
+python shazam.py rescan validate
+```
+
+Commands are executed in the order specified, with progress tracking for each step.
+
 ## 📋 Output
 
 Results are saved in the `recognised-lists` directory with files named after the source MP3:
@@ -118,19 +167,33 @@ Results are saved in the `recognised-lists` directory with files named after the
 
 Each result file contains two sections:
 
-**📃 Tracklist** - Condensed list of identified tracks (first occurrence only):
+**📃 Tracklist** - Clean formatted list with numbered rows:
 ```
-00:01:10 - Artist - Track Title
-00:04:20 - Another Artist - Another Track
+===== Tracklist =====
+  1 - 00:01:10 - Deadmau5 - Strobe
+  2 - 00:04:20 - Skrillex - Bangarang
+  3 - 00:07:30 - Martin Garrix - Animals
 ```
 
 **📊 Scan Log** - Detailed status for every 10-second segment:
 ```
+===== Scan Log =====
 00:00:00 - NOT_FOUND
-00:01:10 - FOUND
+00:01:10 - FOUND - Deadmau5 - Strobe
 00:01:20 - TIMEOUT
 00:01:30 - ERROR
+00:02:00 - FOUND_FALSE_POSITIVE - Track Name
+00:02:10 - FOUND_VALIDATED - Another Track
 ```
+
+**Status Types:**
+- `FOUND` - Successfully identified track
+- `FOUND_VALIDATED` - Track confirmed legitimate by validation
+- `FOUND_FALSE_POSITIVE` - Track marked as false positive
+- `FOUND_UNCERTAIN` - Validation result unclear
+- `NOT_FOUND` - No recognition after retries
+- `TIMEOUT` - Recognition timed out
+- `ERROR` - Exception during recognition
 
 > ℹ️ The tracklist can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
 
@@ -138,6 +201,7 @@ Each result file contains two sections:
 
 - The script splits audio into 10-second segments for precise recognition
 - Uses 40-second timeout with 3 retries for robust API communication
+- **Clean formatted output** with numbered tracks in compact layout
 - Duplicate songs within the same mix are automatically filtered out in the tracklist
 - Failed segments can be reprocessed individually using the rescan feature
 - Large files are processed in chunks to manage memory efficiently

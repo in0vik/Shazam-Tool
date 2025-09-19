@@ -6,13 +6,14 @@
 
 - 🎧 Download audio from SoundCloud or YouTube URLs
 - 🎼 Identify songs using Shazam API with advanced timeout/retry logic
-- 📊 Smart status tracking (FOUND, NOT_FOUND, TIMEOUT, ERROR)
-- 🔄 Intelligent rescanning of failed segments only
+- 📊 **Enhanced status tracking** with comprehensive segment status types
+- 🔄 **Enhanced automatic rescanning** with timeout retry and intelligent segment merging
 - 🔍 **False positive validation** with extended audio segment analysis
 - 📋 **Formatted tracklist** with numbered rows and clean layout
 - 💾 Save results to organized text files named after source MP3s
 - 🚀 Easy setup and usage with provided shell script
 - 🏗️ **Modular architecture** with clean separation of concerns
+- 🎯 **Type-safe status tracking** with centralized SegmentStatus enum
 
 ## 🛠️ Requirements
 
@@ -71,7 +72,7 @@ shazam-tool/
 ├── downloads/                    # Downloaded audio files (auto-created)
 ├── recognised-lists/             # Output directory for results (auto-created)
 ├── audio-segments/               # Temporary segments during processing
-└── log/                          # Application logs (auto-created)
+└── logs/                         # Session-based timestamped logs (auto-created)
 ```
 
 ## 📚 Usage
@@ -122,21 +123,24 @@ python shazam.py download <url>
 
 Downloads audio from YouTube or SoundCloud and processes it for song recognition.
 
-#### 2. Scan Downloaded Files
+#### 2. Enhanced Scan with Automatic Optimization
 
 ```sh
 python shazam.py scan
 ```
 
-Processes all MP3 files in the Downloads directory.
+Processes all MP3 files in the Downloads directory with intelligent enhancement:
+- **Phase 1**: Automatic TIMEOUT retry with delays (up to 2 rounds)
+- **Phase 2**: Sliding window merging of consecutive NOT_FOUND segments (≥3)
+- **Smart Recognition**: Finds optimal segment sizes for difficult tracks
 
-#### 3. Rescan Failed Segments
+#### 3. Manual Rescan Failed Segments
 
 ```sh
 python shazam.py rescan
 ```
 
-Intelligently rescans only TIMEOUT and ERROR segments from previous runs, preserving successful recognitions.
+Manually rescans only TIMEOUT and ERROR segments from previous runs, preserving successful recognitions. (Note: The enhanced `scan` command now includes automatic rescanning).
 
 #### 4. Recognize Single File
 
@@ -218,29 +222,39 @@ Each result file contains two sections:
 00:02:10 - FOUND_VALIDATED - Another Track
 ```
 
-**Status Types:**
-- `FOUND` - Successfully identified track
-- `FOUND_VALIDATED` - Track confirmed legitimate by validation
-- `FOUND_FALSE_POSITIVE` - Track marked as false positive
-- `FOUND_UNCERTAIN` - Validation result unclear
-- `NOT_FOUND` - No recognition after retries
-- `TIMEOUT` - Recognition timed out
-- `ERROR` - Exception during recognition
+**Enhanced Status Types (SegmentStatus Enum):**
+- `FOUND` - Successfully identified track via standard recognition
+- `FOUND_MERGED` - Track identified through intelligent segment merging
+- `FOUND_VALIDATED` - Track confirmed legitimate by validation process
+- `FOUND_FALSE_POSITIVE` - Track marked as false positive detection
+- `FOUND_UNCERTAIN` - Validation result unclear or inconclusive
+- `NOT_FOUND` - No recognition after all retry and merge attempts
+- `TIMEOUT` - Recognition timed out despite retry attempts
+- `ERROR` - Exception during recognition process
 
 > ℹ️ The tracklist can be imported into [TuneMyMusic](https://www.tunemymusic.com/)
 
 ## 📝 Notes
 
+### Architecture & Design
 - **Modular Architecture**: Clean separation of concerns with organized modules for better maintainability
-- The script splits audio into 10-second segments for precise recognition
-- Uses 40-second timeout with 3 retries for robust API communication
-- **Clean formatted output** with numbered tracks in compact layout
-- Duplicate songs within the same mix are automatically filtered out in the tracklist
-- Failed segments can be reprocessed individually using the rescan feature
-- Large files are processed in chunks to manage memory efficiently
-- Status tracking allows for intelligent recovery from network issues or API timeouts
+- **Type Safety**: Centralized SegmentStatus enum prevents string literal errors and improves code reliability
 - **Centralized Configuration**: All constants and settings managed in `modules/core/constants.py`
+- **Session-based Logging**: Timestamped log files (YYYY-MM-DD_HH-MM-SS.log) for each execution session
 - **Enhanced Logging**: Structured logging system with debug mode support
+
+### Processing Features
+- **Enhanced Scan Process**: Automatic two-phase optimization (TIMEOUT retry + segment merging)
+- **Intelligent Segment Merging**: Sliding window approach finds optimal segment sizes for difficult tracks
+- **Smart Recognition**: 10-second base segments with automatic merging for tracks spanning multiple segments
+- **Robust API Communication**: 40-second timeout with 3 retries plus additional retry rounds with delays
+- **Clean Formatted Output**: Numbered tracks in compact layout with comprehensive status tracking
+
+### Performance & Reliability
+- **Automatic Recovery**: Intelligent handling of network issues, API timeouts, and recognition failures
+- **Duplicate Filtering**: Songs within the same mix are automatically deduplicated in tracklist
+- **Memory Efficiency**: Large files processed in chunks with automatic cleanup
+- **Progress Tracking**: Detailed logging shows processing phases and improvement results
 
 ## 🤝 Contributing
 

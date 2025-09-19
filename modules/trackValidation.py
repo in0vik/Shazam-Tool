@@ -1,6 +1,7 @@
 import asyncio
 import os
 
+from modules.core.constants import SegmentStatus
 from modules.core.logger import logger
 from modules.resultFileOperations import read_result_file, write_result_file
 from modules.shazam.shazamApi import recognize_track
@@ -41,7 +42,7 @@ def analyze_false_positive_candidates(result_file_path: str, threshold: int = 3)
                         track_name = " - ".join(parts_split[2:])
 
                         # Only count legitimate tracks (exclude false positives from count)
-                        if status in ["FOUND", "FOUND_VALIDATED"]:
+                        if status in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value]:
                             if track_name not in track_counts:
                                 track_counts[track_name] = 0
                                 track_positions[track_name] = []
@@ -211,7 +212,7 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
     updated_segments = file_data['segments'].copy()
 
     for i, candidate in enumerate(candidates, 1):
-        logger.info(f"\n[{i}/{len(candidates)}] Validating: {candidate['track']}")
+        logger.info(f"[{i}/{len(candidates)}] Validating: {candidate['track']}")
 
         result = validate_segment_with_extended_audio(audio_file_path, candidate)
         validation_results.append(result)
@@ -248,7 +249,7 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
                 updated_segments[timestamp]['track'] = original_track
 
     # Generate summary report
-    logger.info("\n[REPORT] Validation Results Summary:")
+    logger.info("[REPORT] Validation Results Summary:")
 
     confirmed_false = [r for r in validation_results if r['validation_status'] == 'LIKELY_FALSE_POSITIVE']
     no_recognition = [r for r in validation_results if r['validation_status'] == 'NO_EXTENDED_RECOGNITION']
@@ -272,7 +273,7 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
         logger.info(f"    {result['timestamp']}: {result['original_track']}")
 
     # Write updated result file with validation statuses
-    logger.info(f"\n[UPDATE] Updating scan log with validation results...")
+    logger.info(f"[UPDATE] Updating scan log with validation results...")
     write_result_file(result_file_path, file_data['header'], updated_segments)
 
     logger.info(f"[DONE] Validation complete for {os.path.basename(audio_file_path)}!")

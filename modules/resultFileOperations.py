@@ -1,6 +1,6 @@
 import os
 
-from modules.core.constants import SEGMENT_LENGTH
+from modules.core.constants import SEGMENT_LENGTH, SegmentStatus
 from modules.core.helper import parse_timestamp
 from modules.core.logger import logger
 
@@ -36,7 +36,7 @@ def analyze_result_file(result_file_path: str) -> dict:
                     if len(parts) >= 2:
                         timestamp_str = parts[0]
                         # Handle multiple formats: old, new with tracks, and validation statuses
-                        if len(parts) >= 3 and parts[1] in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"]:
+                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value, SegmentStatus.FOUND_FALSE_POSITIVE.value, SegmentStatus.FOUND_UNCERTAIN.value]:
                             status = parts[1]  # FOUND, FOUND_VALIDATED, etc.
                         else:
                             status = parts[1]  # NOT_FOUND, TIMEOUT, ERROR
@@ -48,7 +48,7 @@ def analyze_result_file(result_file_path: str) -> dict:
                             max_segment = max(max_segment, segment_num)
 
                             # Mark segments that need rescanning (TIMEOUT and ERROR for rescan mode)
-                            if status in ["TIMEOUT", "ERROR"]:
+                            if status in [SegmentStatus.TIMEOUT.value, SegmentStatus.ERROR.value]:
                                 rescan_segments.append(segment_num)
                         except (ValueError, IndexError):
                             # Skip malformed timestamp lines
@@ -112,7 +112,7 @@ def read_result_file(result_file_path: str) -> dict:
                             track_data[timestamp_str] = {"track": track_name}
                     elif current_section == "scan_log":
                         # Handle multiple formats: old "timestamp - status" and new "timestamp - FOUND_STATUS - track_name"
-                        if len(parts) >= 3 and parts[1] in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"]:
+                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value, SegmentStatus.FOUND_FALSE_POSITIVE.value, SegmentStatus.FOUND_UNCERTAIN.value, SegmentStatus.FOUND_MERGED.value]:
                             # New format with validation: "timestamp - FOUND_STATUS - track_name"
                             status = parts[1]
                             track_name = " - ".join(parts[2:])  # Join remaining parts in case track name contains " - "
@@ -135,12 +135,12 @@ def read_result_file(result_file_path: str) -> dict:
                 segments[timestamp]["track"] = track_info["track"]
             else:
                 # Track found but no scan log entry - assume FOUND status
-                segments[timestamp] = {"status": "FOUND", "track": track_info["track"]}
+                segments[timestamp] = {"status": SegmentStatus.FOUND.value, "track": track_info["track"]}
 
         # Fill in missing track data for segments that don't have tracks
         for timestamp, segment in segments.items():
             if not segment["track"]:
-                if segment["status"] == "FOUND":
+                if segment["status"] == SegmentStatus.FOUND.value:
                     segment["track"] = "Unknown Track"
                 else:
                     segment["track"] = ""
@@ -168,13 +168,13 @@ def generate_tracklist_and_log(segments: dict) -> tuple:
         track = data["track"]
 
         # Add to scan log with proper status
-        if status in ["FOUND", "FOUND_VALIDATED", "FOUND_FALSE_POSITIVE", "FOUND_UNCERTAIN"] and track:
+        if status in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value, SegmentStatus.FOUND_FALSE_POSITIVE.value, SegmentStatus.FOUND_UNCERTAIN.value, SegmentStatus.FOUND_MERGED.value] and track:
             scan_log.append(f"{timestamp} - {status} - {track}")
         else:
             scan_log.append(f"{timestamp} - {status}")
 
         # Add to tracklist only if found (but not false positive) and not already seen
-        if status in ["FOUND", "FOUND_VALIDATED"] and track not in seen_tracks:
+        if status in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value, SegmentStatus.FOUND_MERGED.value] and track not in seen_tracks:
             # Split track into artist and title
             if " - " in track:
                 artist, title = track.split(" - ", 1)

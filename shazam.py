@@ -7,7 +7,7 @@ from modules.core.constants import DOWNLOADS_DIR, RESULTS_DIR
 from modules.core.helper import ensure_directory_exists
 from modules.core.logger import logger, setup_logging
 from modules.download import download_from_url
-from modules.trackRecognition import process_audio_file, process_downloads
+from modules.trackRecognition import process_audio_file, process_downloads, rescan_timeouts_with_retry, process_not_found_segments
 from modules.trackValidation import validate_single_file
 
 
@@ -52,6 +52,9 @@ Single Command Examples:
 
 
 def main() -> None:
+    # Generate session timestamp at the very start
+    session_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
     parser = argparse.ArgumentParser(description='Shazam Tool', add_help=False)
     parser.add_argument('commands', nargs='*', help='Commands: scan, download, recognize, rescan, validate')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode with detailed logging')
@@ -64,8 +67,8 @@ def main() -> None:
         print_usage()
         sys.exit(1)
 
-    # Set up logging based on debug flag
-    setup_logging(args.debug)
+    # Set up logging with timestamped filename based on session start time
+    setup_logging(args.debug, f"{session_timestamp}.log")
 
     # Parse commands and detect file/URL
     commands = []
@@ -100,7 +103,7 @@ def main() -> None:
 
     # Execute commands in sequence
     for idx, command in enumerate(commands, 1):
-        logger.info(f"\n{'=' * 60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"[{idx}/{len(commands)}] Executing: {command}")
         logger.info(f"{'=' * 60}")
 
@@ -109,7 +112,7 @@ def main() -> None:
 
         logger.info(f"[{idx}/{len(commands)}] Completed: {command}")
 
-    logger.info(f"\n[CHAIN] All commands completed successfully: {' -> '.join(commands)}")
+    logger.info(f"[CHAIN] All commands completed successfully: {' -> '.join(commands)}")
 
 
 def execute_single_command(command: str, url_or_file: str, args, output_filename: str) -> None:
@@ -133,6 +136,39 @@ def execute_single_command(command: str, url_or_file: str, args, output_filename
     elif command in ['scan', 'scan-downloads']:
         logger.info(f"Scanning '{DOWNLOADS_DIR}' directory for MP3 files...")
         process_downloads()
+
+        # Enhanced scan with Phase 1 and Phase 2 processing
+        logger.info("="*60)
+        logger.info("Starting enhanced scan processing...")
+        logger.info("="*60)
+
+        # Get list of processed files
+        ensure_directory_exists(DOWNLOADS_DIR)
+        mp3_files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp3')]
+
+        if mp3_files:
+            for idx, file_name in enumerate(mp3_files, 1):
+                full_path = os.path.join(DOWNLOADS_DIR, file_name)
+                mp3_base_name = os.path.splitext(file_name)[0]
+                output_filename = os.path.join(RESULTS_DIR, f"{mp3_base_name}.txt")
+
+                if os.path.exists(output_filename):
+                    logger.info(f"[{idx}/{len(mp3_files)}] Enhanced processing: {file_name}")
+
+                    # Phase 1: TIMEOUT resolution with retry
+                    phase1_improved = rescan_timeouts_with_retry(full_path, output_filename)
+
+                    # Phase 2: NOT_FOUND segment merging
+                    phase2_improved = process_not_found_segments(full_path, output_filename)
+
+                    if phase1_improved or phase2_improved:
+                        logger.info(f"[{idx}/{len(mp3_files)}] Enhanced processing complete - improvements made")
+                    else:
+                        logger.info(f"[{idx}/{len(mp3_files)}] Enhanced processing complete - no improvements needed")
+
+            logger.info(f"{'='*60}")
+            logger.info("Enhanced scan processing complete!")
+            logger.info("="*60)
 
     elif command == 'rescan':
         logger.info(f"Rescanning failed segments in '{DOWNLOADS_DIR}' directory...")
@@ -189,13 +225,13 @@ def execute_single_command(command: str, url_or_file: str, args, output_filename
 
             # Validate each file
             for idx, (audio_file_path, result_file_path) in enumerate(valid_files, 1):
-                logger.info(f"\n{'=' * 60}")
+                logger.info(f"{'=' * 60}")
                 logger.info(f"[{idx}/{len(valid_files)}] Validating: {os.path.basename(audio_file_path)}")
                 logger.info(f"{'=' * 60}")
 
                 validate_single_file(audio_file_path, result_file_path, args.threshold)
 
-            logger.info(f"\n[DONE] Bulk validation complete! Processed {len(valid_files)} file(s)")
+            logger.info(f"[DONE] Bulk validation complete! Processed {len(valid_files)} file(s)")
 
 
     elif command == 'recognize':
@@ -225,7 +261,7 @@ def execute_single_command(command: str, url_or_file: str, args, output_filename
             output_filename = os.path.join(RESULTS_DIR, f"{mp3_base_name}.txt")
 
             process_audio_file(latest_file, output_filename, 1, 1)
-            logger.info(f"\nResults saved to {output_filename}")
+            logger.info(f"Results saved to {output_filename}")
             return
 
         # Handle local file
@@ -239,7 +275,7 @@ def execute_single_command(command: str, url_or_file: str, args, output_filename
 
         # Since we're processing a single file, pass file_index=1 and total_files=1
         process_audio_file(audio_file, output_filename, 1, 1)
-        logger.info(f"\nResults saved to {output_filename}")
+        logger.info(f"Results saved to {output_filename}")
 
     else:
         logger.error(f"Unknown command: {command}")

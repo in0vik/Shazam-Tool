@@ -2,7 +2,7 @@ import asyncio
 
 from shazamio import Shazam
 
-from modules.core.constants import MAX_RETRIES, TIMEOUT
+from modules.core.constants import MAX_RETRIES, TIMEOUT, SegmentStatus
 from modules.core.logger import logger
 
 
@@ -32,13 +32,13 @@ async def recognize_track(file_path: str) -> dict:
                     await asyncio.sleep(2)  # Increased delay between retries
                     continue
                 logger.debug("Recognition failed after all attempts - no track data")
-                return {"status": "NOT_FOUND", "track": ""}
+                return {"status": SegmentStatus.NOT_FOUND.value, "track": ""}
 
             title = data['track']['title']
             subtitle = data['track']['subtitle']
 
             track_string = f"{subtitle} - {title}"
-            result = {"status": "FOUND", "track": track_string}
+            result = {"status": SegmentStatus.FOUND.value, "track": track_string}
             logger.debug(f"Recognition successful in {elapsed:.2f}s: {track_string}")
             return result
 
@@ -50,7 +50,7 @@ async def recognize_track(file_path: str) -> dict:
                 await asyncio.sleep(3)  # Longer delay after timeout
                 continue
             logger.warning("Recognition failed after all attempts due to timeout")
-            return {"status": "TIMEOUT", "track": ""}
+            return {"status": SegmentStatus.TIMEOUT.value, "track": ""}
 
         except Exception as e:
             elapsed = time.time() - start_time
@@ -59,4 +59,4 @@ async def recognize_track(file_path: str) -> dict:
                 await asyncio.sleep(2)
                 continue
             logger.warning("Recognition failed after all attempts due to exception")
-            return {"status": "ERROR", "track": ""}
+            return {"status": SegmentStatus.ERROR.value, "track": ""}

@@ -1,7 +1,10 @@
-export/
+# Directories from constants.py
 downloads/
 logs/
 recognised-lists/
+audio-segments/
+
+# File types
 *.mp3
 *.txt
 venv/

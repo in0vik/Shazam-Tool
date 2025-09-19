@@ -1,6 +1,6 @@
 # 🎵 Shazam Tool
 
-> 🔍 A Python script that downloads audio from SoundCloud or YouTube, splits it into segments, and uses Shazam to identify songs within the mix.
+> 🔍 A modular Python tool that downloads audio from SoundCloud or YouTube, splits it into segments, and uses Shazam to identify songs within the mix.
 
 ## ✨ Features
 
@@ -12,10 +12,17 @@
 - 📋 **Formatted tracklist** with numbered rows and clean layout
 - 💾 Save results to organized text files named after source MP3s
 - 🚀 Easy setup and usage with provided shell script
+- 🏗️ **Modular architecture** with clean separation of concerns
 
 ## 🛠️ Requirements
 
 This project uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloading audio from SoundCloud and YouTube.
+
+**Core Dependencies:**
+- `yt-dlp` - Audio downloading from YouTube/SoundCloud
+- `shazamio` - Shazam API integration for song recognition
+- `pydub` - Audio processing and segmentation
+- `ffmpeg` - Required system dependency for audio processing
 
 ### Linux
 
@@ -40,6 +47,31 @@ brew install ffmpeg
 
 # Install required packages
 pip install shazamio pydub yt-dlp ShazamApi
+```
+
+## 🏗️ Project Structure
+
+```
+shazam-tool/
+├── shazam.py                     # Main entry point with command parsing
+├── run_shazam.sh                 # Shell script wrapper for easy execution
+├── modules/                      # Modular architecture
+│   ├── core/                     # Core utilities
+│   │   ├── constants.py          # Application constants and configuration
+│   │   ├── helper.py             # Utility functions (timestamps, file ops)
+│   │   └── logger.py             # Centralized logging system
+│   ├── audio/                    # Audio processing modules
+│   │   └── audioSegmentation.py  # Audio segmentation and extended segments
+│   ├── download.py               # YouTube/SoundCloud downloading
+│   ├── resultFileOperations.py   # Result file I/O and parsing
+│   ├── trackRecognition.py       # Main track recognition processing
+│   ├── trackValidation.py        # False positive validation
+│   └── shazam/
+│       └── shazamApi.py          # Shazam API integration
+├── downloads/                    # Downloaded audio files (auto-created)
+├── recognised-lists/             # Output directory for results (auto-created)
+├── audio-segments/               # Temporary segments during processing
+└── log/                          # Application logs (auto-created)
 ```
 
 ## 📚 Usage
@@ -199,6 +231,7 @@ Each result file contains two sections:
 
 ## 📝 Notes
 
+- **Modular Architecture**: Clean separation of concerns with organized modules for better maintainability
 - The script splits audio into 10-second segments for precise recognition
 - Uses 40-second timeout with 3 retries for robust API communication
 - **Clean formatted output** with numbered tracks in compact layout
@@ -206,6 +239,8 @@ Each result file contains two sections:
 - Failed segments can be reprocessed individually using the rescan feature
 - Large files are processed in chunks to manage memory efficiently
 - Status tracking allows for intelligent recovery from network issues or API timeouts
+- **Centralized Configuration**: All constants and settings managed in `modules/core/constants.py`
+- **Enhanced Logging**: Structured logging system with debug mode support
 
 ## 🤝 Contributing
 

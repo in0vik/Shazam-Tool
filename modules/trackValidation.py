@@ -1,9 +1,13 @@
 import asyncio
 import os
+import re
+from difflib import SequenceMatcher
+from typing import List, Tuple
 
 from modules.core.constants import SegmentStatus
+from modules.core.helper import parse_timestamp
 from modules.core.logger import logger
-from modules.resultFileOperations import read_result_file, write_result_file
+from modules.resultFileOperations import read_result_file, write_result_file, generate_tracklist_and_log
 from modules.shazam.shazamApi import recognize_track
 from modules.audio.audioSegmentation import create_extended_segment
 
@@ -200,6 +204,12 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
 
     if not candidates:
         logger.info("[RESULT] No validation candidates found - all tracks appear legitimate!")
+        # Still proceed to Phase 2 for wrong version detection
+        logger.info(f"[DONE] Phase 1 validation complete for {os.path.basename(audio_file_path)}!")
+        logger.info(f"  > No false positive candidates found")
+
+        # Phase 2: Wrong version detection
+        validate_wrong_versions(audio_file_path, result_file_path)
         return
 
     logger.info(f"[CANDIDATES] Found {len(candidates)} validation candidates:")
@@ -276,6 +286,360 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
     logger.info(f"[UPDATE] Updating scan log with validation results...")
     write_result_file(result_file_path, file_data['header'], updated_segments)
 
-    logger.info(f"[DONE] Validation complete for {os.path.basename(audio_file_path)}!")
+    logger.info(f"[DONE] Phase 1 validation complete for {os.path.basename(audio_file_path)}!")
     logger.info(f"  > Updated {len(validation_results)} entries in scan log")
     logger.info(f"  > {total_false_positives} false positives marked, {len(confirmed_valid)} confirmed valid")
+
+    # Phase 2: Wrong version detection
+    validate_wrong_versions(audio_file_path, result_file_path)
+
+
+def get_primary_artist(artist: str) -> str:
+    """
+    Extract the primary/first artist from collaborations by converting all delimiters to commas
+    and taking the first artist.
+
+    Args:
+        artist: Full artist string potentially containing collaborations
+
+    Returns:
+        Primary artist name (first artist in the collaboration)
+    """
+    # Replace all collaboration delimiters with commas
+    delimiters = ['feat.', 'feat', 'featuring', ' & ', ' and ', ' with ']
+    normalized = artist.lower()
+
+    for delimiter in delimiters:
+        normalized = normalized.replace(delimiter, ',')
+
+    # Split by comma and take the first artist
+    artists = [a.strip() for a in normalized.split(',')]
+    return artists[0] if artists else normalized.strip()
+
+
+def normalize_artist(artist: str) -> str:
+    """
+    Full artist normalization for fuzzy comparison.
+    Standardizes collaboration delimiters for better matching.
+
+    Args:
+        artist: Full artist string
+
+    Returns:
+        Normalized artist string with standardized delimiters
+    """
+    # Replace various collaboration delimiters with standardized separator
+    delimiters = ['feat.', 'feat', 'featuring', ' and ', ' with ']
+    normalized = artist.lower()
+    for delimiter in delimiters:
+        normalized = normalized.replace(delimiter, ' & ')
+    return normalized.strip()
+
+
+def normalize_track_title(title: str) -> str:
+    """
+    Normalize track title by removing version indicators and standardizing format.
+
+    Args:
+        title: Original track title
+
+    Returns:
+        Normalized title with version indicators removed
+    """
+    # Remove parentheses and brackets with content
+    normalized = re.sub(r'\([^)]*\)', '', title)
+    normalized = re.sub(r'\[[^\]]*\]', '', normalized)
+
+    # Remove common version suffixes (case insensitive)
+    suffixes = ['VIP', 'Live', 'Bootleg', 'Promo', 'Edit', 'Mix', 'Version', 'Remix']
+    for suffix in suffixes:
+        normalized = re.sub(f'\\b{suffix}\\b', '', normalized, flags=re.IGNORECASE)
+
+    # Clean up extra whitespace
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
+
+
+def calculate_fuzzy_similarity(str1: str, str2: str) -> float:
+    """
+    Calculate similarity ratio between two strings using difflib.
+
+    Args:
+        str1: First string to compare
+        str2: Second string to compare
+
+    Returns:
+        Similarity ratio between 0.0 and 1.0 (1.0 = identical)
+    """
+    return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+
+
+def detect_wrong_version_pairs(tracklist_data: List[dict],
+                             primary_artist_threshold: float = 0.85,
+                             full_artist_threshold: float = 0.85,
+                             track_title_threshold: float = 0.85,
+                             combined_threshold: float = 0.85) -> List[Tuple[int, int, str, float]]:
+    """
+    Detect pairs of tracks that are likely different versions of the same song.
+
+    Uses multiple detection methods:
+    1. Primary artist exact match + track title fuzzy match
+    2. Full artist fuzzy match + track title fuzzy match
+    3. Combined "artist - track" string fuzzy match
+
+    Args:
+        tracklist_data: List of track dictionaries with 'artist', 'title', 'timestamp'
+        primary_artist_threshold: Threshold for track title similarity when primary artist matches
+        full_artist_threshold: Threshold for artist similarity in full fuzzy matching
+        track_title_threshold: Threshold for track title similarity
+        combined_threshold: Threshold for combined string similarity
+
+    Returns:
+        List of tuples (index1, index2, detection_method, similarity_score)
+    """
+    pairs = []
+
+    logger.debug(f"Starting wrong version pair detection for {len(tracklist_data)} tracks")
+    logger.debug(f"Thresholds - Primary artist: {primary_artist_threshold}, Full artist: {full_artist_threshold}, Track: {track_title_threshold}, Combined: {combined_threshold}")
+
+    # Only compare adjacent pairs (1+2, 2+3, 3+4...)
+    for i in range(len(tracklist_data) - 1):
+        j = i + 1
+        track1, track2 = tracklist_data[i], tracklist_data[j]
+
+        # Skip if tracks are identical
+        if track1['artist'] == track2['artist'] and track1['title'] == track2['title']:
+            continue
+
+        logger.debug(f"Comparing adjacent tracks {i+1} and {j+1}:")
+        logger.debug(f"  Track {i+1}: {track1['artist']} - {track1['title']}")
+        logger.debug(f"  Track {j+1}: {track2['artist']} - {track2['title']}")
+
+        # Method 1: Primary artist exact + track fuzzy
+        primary1 = get_primary_artist(track1['artist'])
+        primary2 = get_primary_artist(track2['artist'])
+        title1_norm = normalize_track_title(track1['title'])
+        title2_norm = normalize_track_title(track2['title'])
+
+        logger.debug(f"  Primary artists: '{primary1}' vs '{primary2}'")
+        logger.debug(f"  Normalized titles: '{title1_norm}' vs '{title2_norm}'")
+
+        if primary1 == primary2:
+            title_similarity = calculate_fuzzy_similarity(title1_norm, title2_norm)
+            logger.debug(f"  Primary artist match! Title similarity: {title_similarity:.3f}")
+            if title_similarity >= track_title_threshold:
+                logger.info(f"PAIR DETECTED [Method 1]: Tracks {i+1} and {j+1} (similarity: {title_similarity:.3f})")
+                pairs.append((i, j, "primary_artist_exact+track_fuzzy", title_similarity))
+                continue
+
+        # Method 2: Artist fuzzy + track fuzzy
+        artist1_norm = normalize_artist(track1['artist'])
+        artist2_norm = normalize_artist(track2['artist'])
+        artist_similarity = calculate_fuzzy_similarity(artist1_norm, artist2_norm)
+        title_similarity = calculate_fuzzy_similarity(title1_norm, title2_norm)
+
+        logger.debug(f"  Normalized artists: '{artist1_norm}' vs '{artist2_norm}'")
+        logger.debug(f"  Artist similarity: {artist_similarity:.3f}, Title similarity: {title_similarity:.3f}")
+
+        if (artist_similarity >= full_artist_threshold and
+            title_similarity >= track_title_threshold):
+            avg_similarity = (artist_similarity + title_similarity) / 2
+            logger.info(f"PAIR DETECTED [Method 2]: Tracks {i+1} and {j+1} (avg similarity: {avg_similarity:.3f})")
+            pairs.append((i, j, "artist_fuzzy+track_fuzzy", avg_similarity))
+            continue
+
+        # Method 3: Combined string fuzzy
+        combined1 = f"{artist1_norm} - {title1_norm}"
+        combined2 = f"{artist2_norm} - {title2_norm}"
+        combined_similarity = calculate_fuzzy_similarity(combined1, combined2)
+
+        logger.debug(f"  Combined strings: '{combined1}' vs '{combined2}'")
+        logger.debug(f"  Combined similarity: {combined_similarity:.3f}")
+
+        if combined_similarity >= combined_threshold:
+            logger.info(f"PAIR DETECTED [Method 3]: Tracks {i+1} and {j+1} (combined similarity: {combined_similarity:.3f})")
+            pairs.append((i, j, "combined_fuzzy", combined_similarity))
+
+    logger.info(f"Wrong version pair detection complete. Found {len(pairs)} pairs.")
+    return pairs
+
+
+async def resolve_wrong_version_with_shazam(audio_file_path: str, start_timestamp: str, end_timestamp: str, pair_tracks: list) -> dict:
+    """
+    Creates an extended audio segment covering the wrong version pair range and uses Shazam to identify the correct version.
+
+    Args:
+        audio_file_path: Path to the original audio file
+        start_timestamp: Start timestamp of the segment range
+        end_timestamp: End timestamp of the segment range
+        pair_tracks: List of track names in the pair for comparison
+
+    Returns:
+        Dict with 'status', 'track', and 'confidence' keys
+    """
+    logger.debug(f"Creating extended segment from {start_timestamp} to {end_timestamp}")
+
+    try:
+        # Create extended segment for the entire range
+        extended_segment_path = create_extended_segment(
+            audio_file_path,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp
+        )
+
+        if not extended_segment_path or not os.path.exists(extended_segment_path):
+            logger.error("Failed to create extended segment")
+            return {"status": "ERROR", "track": "", "confidence": 0.0}
+
+        logger.debug(f"Extended segment created: {extended_segment_path}")
+
+        # Use Shazam to recognize the correct version
+        result = await recognize_track(extended_segment_path)
+
+        # Clean up temporary file
+        try:
+            os.remove(extended_segment_path)
+        except:
+            pass
+
+        if result['status'] == 'FOUND':
+            detected_track = result['track']
+            logger.info(f"Shazam identified: {detected_track}")
+
+            # Calculate confidence based on similarity to pair tracks
+            confidence = 0.0
+            for pair_track in pair_tracks:
+                similarity = calculate_fuzzy_similarity(detected_track.lower(), pair_track.lower())
+                confidence = max(confidence, similarity)
+
+            return {
+                "status": "FOUND",
+                "track": detected_track,
+                "confidence": confidence
+            }
+        else:
+            logger.debug(f"Shazam recognition failed with status: {result['status']}")
+            return {"status": result['status'], "track": "", "confidence": 0.0}
+
+    except Exception as e:
+        logger.error(f"Error in Shazam resolution: {e}")
+        return {"status": "ERROR", "track": "", "confidence": 0.0}
+
+
+def validate_wrong_versions(audio_file_path: str, result_file_path: str) -> None:
+    """
+    Phase 2 validation: Detect wrong version pairs in the tracklist and resolve them using Shazam.
+    This runs after the normal false positive validation.
+
+    Args:
+        audio_file_path: Path to the audio file
+        result_file_path: Path to the corresponding result file
+    """
+    logger.info(f"[PHASE 2] Starting wrong version detection for {os.path.basename(audio_file_path)}")
+
+    # Read existing result file
+    file_data = read_result_file(result_file_path)
+
+    # Generate tracklist data for analysis
+    tracklist, _ = generate_tracklist_and_log(file_data['segments'])
+
+    # Extract tracklist data in the format needed for detection
+    tracklist_data = []
+    for track_line in tracklist:
+        # Parse format: "  1 - 00:04:00 - Metrik - Want My Love (feat. Elisabeth Troy)"
+        parts = track_line.split(' - ', 3)
+        if len(parts) >= 4:
+            timestamp = parts[1]
+            artist = parts[2]
+            title = parts[3]
+            tracklist_data.append({
+                "timestamp": timestamp,
+                "artist": artist,
+                "title": title
+            })
+
+    if len(tracklist_data) < 2:
+        logger.info("[PHASE 2] Not enough tracks for wrong version detection")
+        return
+
+    # Detect wrong version pairs
+    detected_pairs = detect_wrong_version_pairs(tracklist_data)
+
+    if not detected_pairs:
+        logger.info("[PHASE 2] No wrong version pairs detected")
+        return
+
+    logger.info(f"[PHASE 2] Found {len(detected_pairs)} wrong version pairs:")
+    for idx1, idx2, method, similarity in detected_pairs:
+        track1 = tracklist_data[idx1]
+        track2 = tracklist_data[idx2]
+        logger.info(f"  Pair {idx1+1}-{idx2+1}: {track1['artist']} - {track1['title']} <-> {track2['artist']} - {track2['title']} (method: {method}, similarity: {similarity:.3f})")
+
+    # Process each pair with Shazam resolution
+    updated_segments = file_data['segments'].copy()
+
+    for idx1, idx2, method, similarity in detected_pairs:
+        track1 = tracklist_data[idx1]
+        track2 = tracklist_data[idx2]
+
+        logger.info(f"[RESOLVE] Processing pair: {track1['artist']} - {track1['title']} <-> {track2['artist']} - {track2['title']}")
+
+        # Find all segments related to both tracks in the scan log
+        related_segments = []
+        track1_full = f"{track1['artist']} - {track1['title']}"
+        track2_full = f"{track2['artist']} - {track2['title']}"
+
+        for timestamp, segment_data in file_data['segments'].items():
+            if (segment_data.get('track') == track1_full or
+                segment_data.get('track') == track2_full) and \
+               segment_data.get('status') in ['FOUND', 'VALIDATION_VALIDATED']:
+                related_segments.append(timestamp)
+
+        if not related_segments:
+            logger.warning(f"No related segments found for pair")
+            continue
+
+        # Sort timestamps to find the range
+        related_segments.sort(key=parse_timestamp)
+        start_timestamp = related_segments[0]
+        end_timestamp = related_segments[-1]
+
+        logger.info(f"[RESOLVE] Analyzing segment range {start_timestamp} to {end_timestamp}")
+
+        # Use async wrapper to call Shazam resolution
+        async def resolve_pair():
+            return await resolve_wrong_version_with_shazam(
+                audio_file_path,
+                start_timestamp,
+                end_timestamp,
+                [track1_full, track2_full]
+            )
+
+        resolution = asyncio.run(resolve_pair())
+
+        if resolution['status'] == 'FOUND':
+            correct_track = resolution['track']
+            confidence = resolution['confidence']
+
+            logger.info(f"[RESOLVE] Correct version identified: {correct_track} (confidence: {confidence:.3f})")
+
+            # Update segments: mark wrong versions and keep correct one
+            for timestamp in related_segments:
+                segment_data = updated_segments[timestamp]
+                current_track = segment_data.get('track', '')
+
+                if current_track == correct_track:
+                    # This is the correct version - mark as validated
+                    segment_data['status'] = SegmentStatus.VALIDATION_VALIDATED.value
+                    logger.debug(f"  {timestamp}: Keeping correct version - {current_track}")
+                else:
+                    # This is a wrong version - mark as wrong version
+                    segment_data['status'] = SegmentStatus.VALIDATION_WRONG_VERSION.value
+                    logger.debug(f"  {timestamp}: Marking wrong version - {current_track}")
+        else:
+            logger.warning(f"[RESOLVE] Failed to resolve pair with Shazam: {resolution['status']}")
+
+    # Write updated result file
+    write_result_file(result_file_path, file_data['header'], updated_segments)
+
+    logger.info("[PHASE 2] Wrong version detection and resolution complete")

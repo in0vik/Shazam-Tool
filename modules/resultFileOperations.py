@@ -36,7 +36,7 @@ def analyze_result_file(result_file_path: str) -> dict:
                     if len(parts) >= 2:
                         timestamp_str = parts[0]
                         # Handle multiple formats: old, new with tracks, and validation statuses
-                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value]:
+                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value, SegmentStatus.VALIDATION_WRONG_VERSION.value]:
                             status = parts[1]  # FOUND, VALIDATION_VALIDATED, etc.
                         else:
                             status = parts[1]  # NOT_FOUND, TIMEOUT, ERROR
@@ -112,7 +112,7 @@ def read_result_file(result_file_path: str) -> dict:
                             track_data[timestamp_str] = {"track": track_name}
                     elif current_section == "scan_log":
                         # Handle multiple formats: old "timestamp - status" and new "timestamp - FOUND_STATUS - track_name"
-                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value, SegmentStatus.FOUND_MERGED.value]:
+                        if len(parts) >= 3 and parts[1] in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value, SegmentStatus.VALIDATION_WRONG_VERSION.value, SegmentStatus.FOUND_MERGED.value]:
                             # New format with validation: "timestamp - FOUND_STATUS - track_name"
                             status = parts[1]
                             track_name = " - ".join(parts[2:])  # Join remaining parts in case track name contains " - "
@@ -168,7 +168,7 @@ def generate_tracklist_and_log(segments: dict) -> tuple:
         track = data["track"]
 
         # Add to scan log with proper status
-        if status in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value, SegmentStatus.FOUND_MERGED.value] and track:
+        if status in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value, SegmentStatus.VALIDATION_FALSE_POSITIVE.value, SegmentStatus.VALIDATION_UNCERTAIN.value, SegmentStatus.VALIDATION_WRONG_VERSION.value, SegmentStatus.FOUND_MERGED.value] and track:
             scan_log.append(f"{timestamp} - {status} - {track}")
         else:
             scan_log.append(f"{timestamp} - {status}")

@@ -6,7 +6,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
 
-echo -e "${BOLD}🎵 Shazam Tool Setup & Runner${NC}\n"
+echo -e "${BOLD}[MUSIC] Shazam Tool Setup & Runner${NC}\n"
 
 # Ensure directories exist
 mkdir -p downloads tmp recognised-lists logs
@@ -59,7 +59,11 @@ setup_environment() {
   
   # Activate virtual environment
   echo "Activating virtual environment..."
-  source venv/bin/activate
+  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+    source venv/Scripts/activate
+  else
+    source venv/bin/activate
+  fi
   
   # Install dependencies
   echo "Installing dependencies..."
@@ -71,7 +75,11 @@ setup_environment() {
 run_shazam() {
   # Ensure virtual environment is activated
   if [ -z "$VIRTUAL_ENV" ]; then
-    source venv/bin/activate
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+      source venv/Scripts/activate
+    else
+      source venv/bin/activate
+    fi
   fi
   
   # Run the Shazam tool with provided arguments
@@ -82,52 +90,77 @@ run_shazam() {
 # Display help information
 show_help() {
   echo -e "${BOLD}Shazam Tool - Help${NC}"
-  echo "Usage: ./run_shazam.sh [command]"
+  echo "Usage: ./run_shazam.sh [command1] [command2] ... [file/url] [options]"
   echo ""
   echo "Commands:"
   echo "  setup       - Install dependencies and set up the environment"
   echo "  download    - Download and analyze audio from URL"
   echo "               Example: ./run_shazam.sh download https://soundcloud.com/user/track"
   echo "  scan        - Process all downloaded files"
+  echo "  rescan      - Reprocess failed segments from previous scans"
   echo "  recognize   - Process a specific audio file"
   echo "               Example: ./run_shazam.sh recognize path/to/file.mp3"
+  echo "  validate    - Validate tracks for false positives"
+  echo "               Example: ./run_shazam.sh validate path/to/file.mp3"
+  echo "               Example: ./run_shazam.sh validate path/to/file.mp3 --threshold 2"
   echo "  help        - Show this help information"
+  echo ""
+  echo -e "${BOLD}Chainable Commands (NEW!):${NC}"
+  echo "  ./run_shazam.sh scan rescan validate           # Scan -> Rescan -> Validate all"
+  echo "  ./run_shazam.sh recognize file.mp3 rescan validate  # Recognize -> Rescan -> Validate"
+  echo "  ./run_shazam.sh scan validate                  # Scan -> Validate all"
+  echo "  ./run_shazam.sh rescan validate                # Rescan -> Validate all"
   echo ""
 }
 
 # Make the script executable
 chmod +x "$0"
 
-# Main command handler
-case "$1" in
-  "setup")
-    setup_environment
-    ;;
-  "download")
-    if [ -z "$2" ]; then
-      echo "Error: URL required"
-      echo "Usage: ./run_shazam.sh download <url>"
+# Check if no arguments provided or help requested
+if [ $# -eq 0 ] || [ "$1" = "help" ]; then
+  show_help
+  exit 0
+fi
+
+# Handle setup command separately as it's not chainable
+if [ "$1" = "setup" ]; then
+  setup_environment
+  exit 0
+fi
+
+# Handle chainable commands
+valid_commands=("scan" "rescan" "validate" "download" "recognize")
+commands=()
+other_args=()
+
+# Parse arguments to separate commands from files/options
+for arg in "$@"; do
+  if [[ " ${valid_commands[@]} " =~ " ${arg} " ]]; then
+    commands+=("$arg")
+  else
+    other_args+=("$arg")
+  fi
+done
+
+# Validate that we have at least one valid command
+if [ ${#commands[@]} -eq 0 ]; then
+  echo "Error: No valid commands found"
+  echo "Valid commands: ${valid_commands[*]}"
+  show_help
+  exit 1
+fi
+
+# Special validation for commands that require arguments
+for cmd in "${commands[@]}"; do
+  if [ "$cmd" = "download" ] || [ "$cmd" = "recognize" ]; then
+    if [ ${#other_args[@]} -eq 0 ]; then
+      echo "Error: Command '$cmd' requires a file path or URL"
+      echo "Usage: ./run_shazam.sh $cmd <file/url> [other commands...]"
       exit 1
     fi
-    run_shazam download "$2"
-    ;;
-  "scan")
-    run_shazam scan
-    ;;
-  "recognize")
-    if [ -z "$2" ]; then
-      echo "Error: File path required"
-      echo "Usage: ./run_shazam.sh recognize <file>"
-      exit 1
-    fi
-    run_shazam recognize "$2"
-    ;;
-  "help"|"")
-    show_help
-    ;;
-  *)
-    echo "Unknown command: $1"
-    show_help
-    exit 1
-    ;;
-esac
+  fi
+done
+
+# Execute the commands by passing everything to the Python script
+echo -e "${BLUE}Running Shazam Tool with chainable commands...${NC}"
+run_shazam "$@"

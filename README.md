@@ -167,9 +167,9 @@ Validates tracks that appear infrequently (≤ threshold occurrences) by re-reco
 - Creates extended 20-50 second segments around suspicious detections
 - Re-recognizes with Shazam using longer audio context
 - Updates scan log with validation statuses:
-  - `FOUND_FALSE_POSITIVE` - Detected as false positive
-  - `FOUND_VALIDATED` - Confirmed as legitimate
-  - `FOUND_UNCERTAIN` - Unclear validation result
+  - `VALIDATION_FALSE_POSITIVE` - Detected as false positive
+  - `VALIDATION_VALIDATED` - Confirmed as legitimate
+  - `VALIDATION_UNCERTAIN` - Unclear validation result
 
 #### 6. Chainable Commands (NEW!)
 
@@ -218,16 +218,16 @@ Each result file contains two sections:
 00:01:10 - FOUND - Deadmau5 - Strobe
 00:01:20 - TIMEOUT
 00:01:30 - ERROR
-00:02:00 - FOUND_FALSE_POSITIVE - Track Name
-00:02:10 - FOUND_VALIDATED - Another Track
+00:02:00 - VALIDATION_FALSE_POSITIVE - Track Name
+00:02:10 - VALIDATION_VALIDATED - Another Track
 ```
 
 **Enhanced Status Types (SegmentStatus Enum):**
 - `FOUND` - Successfully identified track via standard recognition
 - `FOUND_MERGED` - Track identified through intelligent segment merging
-- `FOUND_VALIDATED` - Track confirmed legitimate by validation process
-- `FOUND_FALSE_POSITIVE` - Track marked as false positive detection
-- `FOUND_UNCERTAIN` - Validation result unclear or inconclusive
+- `VALIDATION_VALIDATED` - Track confirmed legitimate by validation process
+- `VALIDATION_FALSE_POSITIVE` - Track marked as false positive detection
+- `VALIDATION_UNCERTAIN` - Validation result unclear or inconclusive
 - `NOT_FOUND` - No recognition after all retry and merge attempts
 - `TIMEOUT` - Recognition timed out despite retry attempts
 - `ERROR` - Exception during recognition process

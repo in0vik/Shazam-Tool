@@ -32,7 +32,7 @@ def analyze_false_positive_candidates(result_file_path: str, threshold: int = 3)
                 elif line.startswith("=====") and in_scan_log:
                     break
 
-                # Check for any FOUND variant (FOUND, FOUND_VALIDATED, FOUND_FALSE_POSITIVE, FOUND_UNCERTAIN)
+                # Check for any FOUND variant (FOUND, VALIDATION_VALIDATED, VALIDATION_FALSE_POSITIVE, VALIDATION_UNCERTAIN)
                 if in_scan_log and (" - FOUND" in line):
                     parts_split = line.split(" - ")
 
@@ -42,7 +42,7 @@ def analyze_false_positive_candidates(result_file_path: str, threshold: int = 3)
                         track_name = " - ".join(parts_split[2:])
 
                         # Only count legitimate tracks (exclude false positives from count)
-                        if status in [SegmentStatus.FOUND.value, SegmentStatus.FOUND_VALIDATED.value]:
+                        if status in [SegmentStatus.FOUND.value, SegmentStatus.VALIDATION_VALIDATED.value]:
                             if track_name not in track_counts:
                                 track_counts[track_name] = 0
                                 track_positions[track_name] = []
@@ -225,7 +225,7 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
         if timestamp in updated_segments:
             if validation_status == 'LIKELY_FALSE_POSITIVE':
                 # Update status to indicate false positive
-                updated_segments[timestamp]['status'] = 'FOUND_FALSE_POSITIVE'
+                updated_segments[timestamp]['status'] = SegmentStatus.VALIDATION_FALSE_POSITIVE.value
                 # Keep original track name but mark as false positive
                 updated_segments[timestamp]['track'] = original_track
 
@@ -235,17 +235,17 @@ def validate_single_file(audio_file_path: str, result_file_path: str, threshold:
 
             elif validation_status == 'NO_EXTENDED_RECOGNITION':
                 # Mark as false positive - extended segments couldn't recognize anything
-                updated_segments[timestamp]['status'] = 'FOUND_FALSE_POSITIVE'
+                updated_segments[timestamp]['status'] = SegmentStatus.VALIDATION_FALSE_POSITIVE.value
                 updated_segments[timestamp]['track'] = original_track
 
             elif validation_status == 'CONFIRMED_VALID':
                 # Mark as validated and confirmed
-                updated_segments[timestamp]['status'] = 'FOUND_VALIDATED'
+                updated_segments[timestamp]['status'] = SegmentStatus.VALIDATION_VALIDATED.value
                 updated_segments[timestamp]['track'] = original_track
 
             elif validation_status == 'UNCERTAIN':
                 # Mark as suspicious but uncertain
-                updated_segments[timestamp]['status'] = 'FOUND_UNCERTAIN'
+                updated_segments[timestamp]['status'] = SegmentStatus.VALIDATION_UNCERTAIN.value
                 updated_segments[timestamp]['track'] = original_track
 
     # Generate summary report
